@@ -13,6 +13,11 @@
   }
 }
 
+.react-datepicker-popper{
+  z-index: 10000;
+}
+
+
 .App-header {
   background-color: #282c34;
   min-height: 100vh;
