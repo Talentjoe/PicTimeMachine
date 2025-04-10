@@ -43,6 +43,7 @@ function ImageMapViewerWithTimeFilter() {
     const [startTime] = useState(null);
     const [endTime] = useState(null);
     const timelineRef = React.useRef(null);
+    const [isChina,setIsChina] = useState(false);
 
     const handleSecondChange = (second: number) => {
         setCurrentSecond(second);
@@ -72,8 +73,12 @@ function ImageMapViewerWithTimeFilter() {
 
         results.sort((a, b) => a.date - b.date);
 
+        alert(`读取到 ${results.length} 张有效图片`);
+
         setImages(results);
     };
+
+    const handleSetChina = () => {isChina ? setIsChina(false) : setIsChina(true);};
 
     const filteredImages = useMemo(() => {
         return images
@@ -98,10 +103,22 @@ function ImageMapViewerWithTimeFilter() {
 
 
             <MapContainer center={[0, 0]} zoom={2} style={{height: '700px', width: '100%', marginTop: 20}}>
-                <TileLayer
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    attribution="&copy; OpenStreetMap"
-                />
+                {
+                    isChina ?
+                        <TileLayer
+                            key="china"
+                            url="https://t{s}.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=	7bd4dd0bc5f8b384925e97953f9325aa"
+                            subdomains={['0', '1', '2', '3', '4', '5', '6', '7']}
+                            attribution="&copy; 国家地理信息公共服务平台"
+                        /> :
+                        <TileLayer
+                            key = "osm"
+                            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                            attribution="&copy; OpenStreetMap"
+                        />
+
+                }
+
                 <MarkerClusterGroupWrapper images={filteredImages}/>
 
                 {currentSecond === images.length ?
@@ -110,8 +127,10 @@ function ImageMapViewerWithTimeFilter() {
 
 
             </MapContainer>
-
-            <input type="file" webkitdirectory="true" multiple onChange={handleFolderSelect}/>
+            <div>
+                <button onClick={handleSetChina}>设置为 {isChina ? "外国": "中国"}</button>
+                <input type="file" webkitdirectory="true" multiple onChange={handleFolderSelect}/>
+            </div>
 
             <div>
                 <Timeline
