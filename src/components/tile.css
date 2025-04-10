@@ -1,0 +1,15 @@
+
+.my-cluster-icon {
+    background-color: rgba(255, 100, 100, 0.7);
+    border-radius: 50%;
+    color: white;
+    font-weight: bold;
+    text-align: center;
+    line-height: 40px;
+    box-shadow: 0 0 8px rgba(0, 0, 0, 0.3);
+}
+
+.custom-cluster {
+    width: 40px;
+    height: 40px;
+}

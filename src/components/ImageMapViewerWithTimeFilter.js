@@ -8,6 +8,9 @@ import 'leaflet/dist/leaflet.css';
 import iconUrl from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 import { useMap } from 'react-leaflet';
+import Timeline from "./TimeLine.tsx";
+import 'leaflet.markercluster';
+import {MarkerClusterGroupWrapper} from "./MarkerClusterGroupWrapper.tsx";
 
 let DefaultIcon = L.icon({
     iconUrl,
@@ -26,14 +29,12 @@ const dmsToDecimal = (dms, ref) => {
     return (ref === 'S' || ref === 'W') ? -decimal : decimal;
 };
 
-const parseExifDate = (dateStr) => {
-    if (!dateStr) return null;
-    try {
-        return new Date(dateStr.replace(/:/g, '-').replace(' ', 'T'));
-    } catch {
-        return null;
-    }
-};
+function parseCustomTime(timeStr) {
+    const [year, month, day, hour, minute, second] = timeStr
+        .split(/[:\s]/)
+        .map(Number);
+    return new Date(year, month - 1, day, hour, minute, second);
+}
 
 function FitBounds({ positions }) {
     const map = useMap();
@@ -65,7 +66,7 @@ function ImageMapViewerWithTimeFilter() {
                 const exifData = EXIF.readFromBinaryFile(arrayBuffer);
                 const lat = exifData.GPSLatitude ? dmsToDecimal(exifData.GPSLatitude, exifData.GPSLatitudeRef) : null;
                 const lng = exifData.GPSLongitude ? dmsToDecimal(exifData.GPSLongitude, exifData.GPSLongitudeRef) : null;
-                const date = parseExifDate(exifData.DateTimeOriginal || exifData.DateTime);
+                const date = parseCustomTime(exifData.DateTimeOriginal);
 
                 results.push({ name: file.name, url, lat, lng, date });
             } catch (err) {
@@ -83,8 +84,6 @@ function ImageMapViewerWithTimeFilter() {
 
     return (
         <div>
-            <h2>本地图片地图展示</h2>
-            <input type="file" webkitdirectory="true" multiple onChange={handleFolderSelect}/>
 
 
             <MapContainer center={[0, 0]} zoom={2} style={{height: '700px', width: '100%', marginTop: 20}}>
@@ -92,45 +91,19 @@ function ImageMapViewerWithTimeFilter() {
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                     attribution="&copy; OpenStreetMap"
                 />
-                {filteredImages.map((img, idx) => (
-                    <Marker key={idx} position={[img.lat, img.lng]}>
-                        <Popup>
-                            <strong>{img.name}</strong>
-                            <br/>
-                            {img.date?.toLocaleString()}
-                            <br/>
-                            <img src={img.url} width="200" alt={img.name}/>
-                        </Popup>
-                    </Marker>
-                ))}
+                <MarkerClusterGroupWrapper images={filteredImages}/>
 
                 <FitBounds positions={(filteredImages ?? []).map(img => [img.lat, img.lng])}/>
 
             </MapContainer>
 
-            <div style={{display: 'flex', gap: '1rem', marginTop: '1rem', zIndex: 10000000}}>
-                <div>
-                    起始时间：
-                    <DatePicker
-                        selected={startTime}
-                        onChange={(date) => setStartTime(date)}
-                        showTimeSelect
-                        dateFormat="Pp"
-                    />
-                </div>
-                <div>
-                    结束时间：
-                    <DatePicker
-                        selected={endTime}
-                        onChange={(date) => setEndTime(date)}
-                        showTimeSelect
-                        dateFormat="Pp"
-                    />
-                </div>
+            <input type="file" webkitdirectory="true" multiple onChange={handleFolderSelect}/>
+
+            <div >
+                <Timeline startTime={0} endTime={60}></Timeline>
             </div>
-            {/* 📦 预留：未来图片管理功能接口 */}
             <div style={{marginTop: 20}}>
-                <h3>🗃️ 图片管理（开发中）</h3>
+                <h3>图片</h3>
                 <ul>
                     {images.map((img, i) => (
                         <li key={i}>{img.name} {img.date ? `(${img.date.toLocaleString()})` : ''}</li>

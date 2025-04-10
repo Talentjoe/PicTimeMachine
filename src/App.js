@@ -5,7 +5,6 @@ import ImageMapViewerWithTimeFilter from './components/ImageMapViewerWithTimeFil
 function App() {
     return (
         <div>
-            <h1 style={{ textAlign: 'center' }}>🗺️ 本地图片地图展示工具</h1>
             <ImageMapViewerWithTimeFilter />
         </div>
     );

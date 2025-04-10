@@ -1,0 +1,66 @@
+.timeline-container {
+    max-width: 600px;
+    margin: 24px auto;
+    padding: 20px;
+    border-radius: 10px;
+    background-color: #ffffff;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    font-family: "Segoe UI", sans-serif;
+}
+
+.current-time {
+    font-size: 15px;
+    color: #333;
+    margin-bottom: 16px;
+}
+
+.controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    gap: 20px;
+}
+
+.start-time {
+    font-size: 13px;
+    color: #666;
+    white-space: nowrap;
+}
+
+.rate-control {
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    color: #444;
+    gap: 4px;
+}
+
+.rate-control input {
+    width: 60px;
+    padding: 4px 6px;
+    font-size: 13px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    text-align: right;
+}
+
+.play-button {
+    font-size: 13px;
+    color: #fff;
+    background-color: #2563eb;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.play-button:hover {
+    background-color: #1e40af;
+}
+
+.slider {
+    width: 100%;
+    accent-color: #2563eb;
+}
