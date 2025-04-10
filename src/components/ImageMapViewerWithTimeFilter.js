@@ -1,16 +1,16 @@
-import React, {useEffect, useState} from 'react';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import React, { useMemo, useState} from 'react';
+import {MapContainer, TileLayer} from 'react-leaflet';
 import L from 'leaflet';
 import EXIF from 'exif-js';
-import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import 'leaflet/dist/leaflet.css';
 import iconUrl from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
-import { useMap } from 'react-leaflet';
 import Timeline from "./TimeLine.tsx";
 import 'leaflet.markercluster';
 import {MarkerClusterGroupWrapper} from "./MarkerClusterGroupWrapper.tsx";
+import FocusOnMarkers from "./focusOnMarkers.js";
+import FitBounds from "./FitBound";
 
 let DefaultIcon = L.icon({
     iconUrl,
@@ -36,22 +36,18 @@ function parseCustomTime(timeStr) {
     return new Date(year, month - 1, day, hour, minute, second);
 }
 
-function FitBounds({ positions }) {
-    const map = useMap();
-
-    useEffect(() => {
-        if (positions.length === 0) return;
-        const bounds = L.latLngBounds(positions);
-        map.fitBounds(bounds, { padding: [20, 20] }); // padding 可微调视图边距
-    }, [positions, map]);
-
-    return null;
-}
 
 function ImageMapViewerWithTimeFilter() {
+    const [currentSecond, setCurrentSecond] = useState(0);
     const [images, setImages] = useState([]);
-    const [startTime, setStartTime] = useState(null);
-    const [endTime, setEndTime] = useState(null);
+    const [startTime] = useState(null);
+    const [endTime] = useState(null);
+    const timelineRef = React.useRef(null);
+
+    const handleSecondChange = (second: number) => {
+        setCurrentSecond(second);
+    };
+
 
     const handleFolderSelect = async (e) => {
         const files = Array.from(e.target.files);
@@ -68,20 +64,35 @@ function ImageMapViewerWithTimeFilter() {
                 const lng = exifData.GPSLongitude ? dmsToDecimal(exifData.GPSLongitude, exifData.GPSLongitudeRef) : null;
                 const date = parseCustomTime(exifData.DateTimeOriginal);
 
-                results.push({ name: file.name, url, lat, lng, date });
+                results.push({name: file.name, url, lat, lng, date});
             } catch (err) {
                 console.warn(`Failed to read EXIF from ${file.name}`, err);
             }
         }
 
+        results.sort((a, b) => a.date - b.date);
+
         setImages(results);
     };
 
-    const filteredImages = images.filter(img => {
-        if (!img.lat || !img.lng || !img.date) return false;
-        return (!startTime || img.date >= startTime) && (!endTime || img.date <= endTime);
-    });
+    const filteredImages = useMemo(() => {
+        return images
+            .filter(img => {
+                if (!img.lat || !img.lng || !img.date) return false;
+                return (!startTime || img.date >= startTime) && (!endTime || img.date <= endTime);
+            })
+            .slice(0, currentSecond);
+    }, [images, startTime, endTime, currentSecond]);
 
+    const focusImageFilter = useMemo(() => {
+        return images
+            .filter(img => {
+                if (!img.lat || !img.lng || !img.date) return false;
+                return (!startTime || img.date >= startTime) && (!endTime || img.date <= endTime);
+            })
+            .slice(Math.max(currentSecond-1, 0), currentSecond);
+    }, [images, startTime, endTime, currentSecond]);
+    // <FitBounds positions={(focusImageFilter ?? []).map(img => [img.lat, img.lng])}/>
     return (
         <div>
 
@@ -93,22 +104,34 @@ function ImageMapViewerWithTimeFilter() {
                 />
                 <MarkerClusterGroupWrapper images={filteredImages}/>
 
-                <FitBounds positions={(filteredImages ?? []).map(img => [img.lat, img.lng])}/>
+                {currentSecond === images.length ?
+                    (<FitBounds positions={(filteredImages ?? []).map(img => [img.lat, img.lng])}/>) :
+                    (<FocusOnMarkers points={focusImageFilter}/>)}
+
 
             </MapContainer>
 
             <input type="file" webkitdirectory="true" multiple onChange={handleFolderSelect}/>
 
-            <div >
-                <Timeline startTime={0} endTime={60}></Timeline>
+            <div>
+                <Timeline
+                    ref={timelineRef}
+                    startTime={0}
+                    endTime={images.length}
+                    onSecondChange={handleSecondChange}
+                />
+
             </div>
             <div style={{marginTop: 20}}>
                 <h3>图片</h3>
                 <ul>
-                    {images.map((img, i) => (
-                        <li key={i}>{img.name} {img.date ? `(${img.date.toLocaleString()})` : ''}</li>
+                    {images.slice(0, currentSecond).map((img, i) => (
+                        <li key={i}>
+                            {img.name} {img.date ? `(${img.date.toLocaleString()})` : ''}
+                        </li>
                     ))}
                 </ul>
+
             </div>
         </div>
     );

@@ -11,19 +11,24 @@ interface TimelineProps {
     startTime: number;
     endTime: number;
     interval?: number;
+    onSecondChange?: (second: number) => void; // 整秒变化时调用
 }
+
 
 export interface TimelineHandle {
     getCurrentTime: () => number;
 }
 
 const Timeline = forwardRef<TimelineHandle, TimelineProps>(
-    ({ startTime, endTime, interval = 100 }, ref) => {
+    ({ startTime, endTime, interval = 100, onSecondChange }, ref) => {
+
         const [currentTime, setCurrentTime] = useState(startTime);
-        const [playing, setPlaying] = useState(true);
-        const [rate, setRate] = useState(1);
+        const [playing, setPlaying] = useState(false);
+        const [rate,setRate] = useState(1);
         const requestRef = useRef<number>(0);
         const lastUpdateTime = useRef<number>(Date.now());
+
+        const lastSecondRef = useRef<number>(Math.floor(startTime));
 
         // 暴露方法给父组件
         useImperativeHandle(ref, () => ({
@@ -40,6 +45,13 @@ const Timeline = forwardRef<TimelineHandle, TimelineProps>(
 
                 setCurrentTime((prev) => {
                     const next = prev + delta * rate;
+
+                    const floored = Math.floor(next);
+                    if (floored !== lastSecondRef.current) {
+                        lastSecondRef.current = floored;
+                        if (onSecondChange) onSecondChange(floored);
+                    }
+
                     if (next >= endTime) {
                         setPlaying(false);
                         return endTime;
@@ -52,7 +64,8 @@ const Timeline = forwardRef<TimelineHandle, TimelineProps>(
 
             requestRef.current = requestAnimationFrame(update);
             return () => cancelAnimationFrame(requestRef.current);
-        }, [playing, rate, endTime]);
+        }, [playing, rate, endTime, onSecondChange]);
+
 
         return (
             <div className="timeline-container">
@@ -73,7 +86,7 @@ const Timeline = forwardRef<TimelineHandle, TimelineProps>(
                             value={rate}
                             onChange={(e) => {
                                 const val = parseFloat(e.target.value);
-                                if (!isNaN(val) && val > 0) setRate(val);
+                                setRate(val);
                             }}
                         />
                         <span>x</span>
