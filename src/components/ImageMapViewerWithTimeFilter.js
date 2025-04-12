@@ -40,8 +40,8 @@ function parseCustomTime(timeStr) {
 function ImageMapViewerWithTimeFilter() {
     const [currentSecond, setCurrentSecond] = useState(0);
     const [images, setImages] = useState([]);
-    const [startTime] = useState(null);
-    const [endTime] = useState(null);
+    const [startTime] = useState(null); //not used
+    const [endTime] = useState(null); // not used
     const timelineRef = React.useRef(null);
     const [isChina,setIsChina] = useState(false);
 
@@ -81,6 +81,12 @@ function ImageMapViewerWithTimeFilter() {
     const handleSetChina = () => {isChina ? setIsChina(false) : setIsChina(true);};
 
     const filteredImages = useMemo(() => {
+        if (currentSecond === 0 || currentSecond === images.length) {
+            return images.filter(img => {
+                if (!img.lat || !img.lng || !img.date) return false;
+                return (!startTime || img.date >= startTime) && (!endTime || img.date <= endTime);
+            });
+        }
         return images
             .filter(img => {
                 if (!img.lat || !img.lng || !img.date) return false;
@@ -121,7 +127,7 @@ function ImageMapViewerWithTimeFilter() {
 
                 <MarkerClusterGroupWrapper images={filteredImages}/>
 
-                {currentSecond === images.length ?
+                {(currentSecond === images.length || currentSecond === 0) ?
                     (<FitBounds positions={(filteredImages ?? []).map(img => [img.lat, img.lng])}/>) :
                     (<FocusOnMarkers points={focusImageFilter}/>)}
 

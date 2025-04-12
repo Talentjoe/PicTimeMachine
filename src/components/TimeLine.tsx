@@ -14,7 +14,6 @@ interface TimelineProps {
     onSecondChange?: (second: number) => void; // 整秒变化时调用
 }
 
-
 export interface TimelineHandle {
     getCurrentTime: () => number;
 }
@@ -34,6 +33,8 @@ const Timeline = forwardRef<TimelineHandle, TimelineProps>(
         useImperativeHandle(ref, () => ({
             getCurrentTime: () => currentTime,
         }));
+
+
 
         useEffect(() => {
             if (!playing) return;
@@ -66,11 +67,32 @@ const Timeline = forwardRef<TimelineHandle, TimelineProps>(
             return () => cancelAnimationFrame(requestRef.current);
         }, [playing, rate, endTime, onSecondChange]);
 
+        useEffect(() => {
+            lastUpdateTime.current = Date.now();
+        }, [playing]);
+
+        const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+            const value = parseFloat(e.target.value);
+            setCurrentTime(value);
+            const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+                const value = parseFloat(e.target.value);
+                const delta = 0; // ✅ 只手动更新 currentTime，不往后推进时间
+                setCurrentTime(value);
+
+                // 触发整秒变化回调
+                const floored = Math.floor(value);
+                if (floored !== lastSecondRef.current) {
+                    lastSecondRef.current = floored;
+                    if (onSecondChange) onSecondChange(floored);
+                }
+            };
+            handleSliderChange(e);
+        }
 
         return (
             <div className="timeline-container">
                 <div className="current-time">
-                    当前时间: <strong>{Math.floor(currentTime)}s</strong>
+                    当前图片: <strong>{Math.floor(currentTime)}</strong>
                 </div>
 
                 <div className="controls">
@@ -106,7 +128,7 @@ const Timeline = forwardRef<TimelineHandle, TimelineProps>(
                     max={endTime}
                     step="0.01"
                     value={currentTime}
-                    onChange={(e) => setCurrentTime(parseFloat(e.target.value))}
+                    onChange={handleSliderChange}
                     className="slider"
                 />
             </div>
