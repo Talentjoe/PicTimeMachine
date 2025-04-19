@@ -31,8 +31,9 @@ interface ClusterProps {
         date?: Date;
         url: string;
     }[];
+    highlight?: boolean;
 }
-export const MarkerClusterGroupWrapper: React.FC<ClusterProps> = ({ images }) => {
+export const MarkerClusterGroupWrapper: React.FC<ClusterProps> = ({ images , highlight }) => {
     const map = useMap();
 
     useEffect(() => {
@@ -52,8 +53,8 @@ export const MarkerClusterGroupWrapper: React.FC<ClusterProps> = ({ images }) =>
             }
         });
 
-        const highlightImage = images[images.length - 1];
-        const normalImages = images.length > 1 ? images.slice(0, -1) : [];
+        const highlightImage = highlight ? images[images.length - 1] :null;
+        const normalImages = images.length > 1 ?  highlight ? images.slice(0, -1) : images : [];
 
         normalImages.forEach((img) => {
             const marker = L.marker([img.lat, img.lng], { icon: defaultIcon });

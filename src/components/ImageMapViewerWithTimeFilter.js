@@ -36,7 +36,6 @@ function parseCustomTime(timeStr) {
     return new Date(year, month - 1, day, hour, minute, second);
 }
 
-
 function ImageMapViewerWithTimeFilter() {
     const [currentSecond, setCurrentSecond] = useState(0);
     const [images, setImages] = useState([]);
@@ -54,7 +53,7 @@ function ImageMapViewerWithTimeFilter() {
         const files = Array.from(e.target.files);
         const imageFiles = files.filter(f => f.type.startsWith('image/'));
 
-        const results = [];
+        const results = images;
         for (const file of imageFiles) {
             const url = URL.createObjectURL(file);
             const arrayBuffer = await file.arrayBuffer();
@@ -71,11 +70,12 @@ function ImageMapViewerWithTimeFilter() {
             }
         }
 
-        results.sort((a, b) => a.date - b.date);
+        const uresults = [...new Set(results)];
+        uresults.sort((a, b) => a.date - b.date);
 
-        alert(`读取到 ${results.length} 张有效图片`);
+        alert(`总共有 ${uresults.length} 张有效图片`);
 
-        setImages(results);
+        setImages(uresults);
     };
 
     const handleSetChina = () => {isChina ? setIsChina(false) : setIsChina(true);};
@@ -103,11 +103,14 @@ function ImageMapViewerWithTimeFilter() {
             })
             .slice(Math.max(currentSecond-1, 0), currentSecond);
     }, [images, startTime, endTime, currentSecond]);
+
+    const handleDelete = () => {
+        setImages([]);
+        setCurrentSecond(0);
+    }
     // <FitBounds positions={(focusImageFilter ?? []).map(img => [img.lat, img.lng])}/>
     return (
         <div>
-
-
             <MapContainer center={[0, 0]} zoom={2} style={{height: '700px', width: '100%', marginTop: 20}}>
                 {
                     isChina ?
@@ -125,7 +128,7 @@ function ImageMapViewerWithTimeFilter() {
 
                 }
 
-                <MarkerClusterGroupWrapper images={filteredImages}/>
+                <MarkerClusterGroupWrapper images={filteredImages} highlight={!(currentSecond === images.length || currentSecond === 0)} />
 
                 {(currentSecond === images.length || currentSecond === 0) ?
                     (<FitBounds positions={(filteredImages ?? []).map(img => [img.lat, img.lng])}/>) :
@@ -134,8 +137,10 @@ function ImageMapViewerWithTimeFilter() {
 
             </MapContainer>
             <div>
-                <button onClick={handleSetChina}>设置为 {isChina ? "外国": "中国"}</button>
-                <input type="file" webkitdirectory="true" multiple onChange={handleFolderSelect}/>
+                <button onClick={handleSetChina}>设置为 {isChina ? "外国" : "中国"}</button>
+                <input type="file" accept="image/*" multiple onChange={handleFolderSelect}/>
+                <button onClick={handleDelete}>删除全部</button>
+                <i> 当前有: {images.length} 张图片</i>
             </div>
 
             <div>
@@ -150,7 +155,7 @@ function ImageMapViewerWithTimeFilter() {
             <div style={{marginTop: 20}}>
                 <h3>图片</h3>
                 <ul>
-                    {images.slice(0, currentSecond).map((img, i) => (
+                    {images.map((img, i) => (
                         <li key={i}>
                             {img.name} {img.date ? `(${img.date.toLocaleString()})` : ''}
                         </li>
