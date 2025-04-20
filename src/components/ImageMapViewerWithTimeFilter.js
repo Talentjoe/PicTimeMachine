@@ -43,6 +43,7 @@ function ImageMapViewerWithTimeFilter() {
     const [endTime] = useState(null); // not used
     const timelineRef = React.useRef(null);
     const [isChina, setIsChina] = useState(false);
+    const [isAmap, setAmap] = useState(false);
 
     const handleSecondChange = (second: number) => {
         setCurrentSecond(second);
@@ -82,6 +83,10 @@ function ImageMapViewerWithTimeFilter() {
         isChina ? setIsChina(false) : setIsChina(true);
     };
 
+    const handleSetAmap = () => {
+        isAmap ? setAmap(false) : setAmap(true);
+    };
+
     const filteredImages = useMemo(() => {
         if (currentSecond === 0 || currentSecond === images.length) {
             return images.filter(img => {
@@ -113,15 +118,21 @@ function ImageMapViewerWithTimeFilter() {
     // <FitBounds positions={(focusImageFilter ?? []).map(img => [img.lat, img.lng])}/>
     return (
         <div>
-                <MapContainer center={[0, 0]} zoom={2} style={{height: '600px', width: '100%', marginTop: 20}}>
+                <MapContainer center={[0, 0]} zoom={3} style={{height: '80vh', width: '100%', marginTop: 20}}>
                     {
-                        isChina ?
+                        isChina ? isAmap ?
                             <TileLayer
                                 key="china"
                                 url="https://t{s}.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=	7bd4dd0bc5f8b384925e97953f9325aa"
                                 subdomains={['0', '1', '2', '3', '4', '5', '6', '7']}
                                 attribution="&copy; 国家地理信息公共服务平台"
                             /> :
+                                <TileLayer
+                                    key="china-Amap"
+                                    url="http://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"
+                                    subdomains={['1', '2', '3', '4']}
+                                    attribution="&copy; 高德地图"
+                                /> :
                             <TileLayer
                                 key="osm"
                                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -141,6 +152,7 @@ function ImageMapViewerWithTimeFilter() {
                 </MapContainer>
                 <div>
                     <button onClick={handleSetChina}>设置为 {isChina ? "外国" : "中国"}</button>
+                    {isChina ? <button onClick={handleSetAmap}>设置为 {isAmap?"高德地图":"天地图"}</button> : null }
                     <input type="file" multiple onChange={handleFolderSelect}/>
                     <button onClick={handleDelete}>删除全部</button>
                     <i> 当前有: {images.length} 张图片</i>
