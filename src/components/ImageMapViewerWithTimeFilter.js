@@ -1,4 +1,4 @@
-import React, { useMemo, useState} from 'react';
+import React, {useMemo, useState} from 'react';
 import {MapContainer, TileLayer} from 'react-leaflet';
 import L from 'leaflet';
 import EXIF from 'exif-js';
@@ -42,7 +42,7 @@ function ImageMapViewerWithTimeFilter() {
     const [startTime] = useState(null); //not used
     const [endTime] = useState(null); // not used
     const timelineRef = React.useRef(null);
-    const [isChina,setIsChina] = useState(false);
+    const [isChina, setIsChina] = useState(false);
 
     const handleSecondChange = (second: number) => {
         setCurrentSecond(second);
@@ -78,7 +78,9 @@ function ImageMapViewerWithTimeFilter() {
         setImages(uresults);
     };
 
-    const handleSetChina = () => {isChina ? setIsChina(false) : setIsChina(true);};
+    const handleSetChina = () => {
+        isChina ? setIsChina(false) : setIsChina(true);
+    };
 
     const filteredImages = useMemo(() => {
         if (currentSecond === 0 || currentSecond === images.length) {
@@ -101,7 +103,7 @@ function ImageMapViewerWithTimeFilter() {
                 if (!img.lat || !img.lng || !img.date) return false;
                 return (!startTime || img.date >= startTime) && (!endTime || img.date <= endTime);
             })
-            .slice(Math.max(currentSecond-1, 0), currentSecond);
+            .slice(Math.max(currentSecond - 1, 0), currentSecond);
     }, [images, startTime, endTime, currentSecond]);
 
     const handleDelete = () => {
@@ -111,37 +113,38 @@ function ImageMapViewerWithTimeFilter() {
     // <FitBounds positions={(focusImageFilter ?? []).map(img => [img.lat, img.lng])}/>
     return (
         <div>
-            <MapContainer center={[0, 0]} zoom={2} style={{height: '700px', width: '100%', marginTop: 20}}>
-                {
-                    isChina ?
-                        <TileLayer
-                            key="china"
-                            url="https://t{s}.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=	7bd4dd0bc5f8b384925e97953f9325aa"
-                            subdomains={['0', '1', '2', '3', '4', '5', '6', '7']}
-                            attribution="&copy; 国家地理信息公共服务平台"
-                        /> :
-                        <TileLayer
-                            key = "osm"
-                            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                            attribution="&copy; OpenStreetMap"
-                        />
+                <MapContainer center={[0, 0]} zoom={2} style={{height: '600px', width: '100%', marginTop: 20}}>
+                    {
+                        isChina ?
+                            <TileLayer
+                                key="china"
+                                url="https://t{s}.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=	7bd4dd0bc5f8b384925e97953f9325aa"
+                                subdomains={['0', '1', '2', '3', '4', '5', '6', '7']}
+                                attribution="&copy; 国家地理信息公共服务平台"
+                            /> :
+                            <TileLayer
+                                key="osm"
+                                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                                attribution="&copy; OpenStreetMap"
+                            />
 
-                }
+                    }
 
-                <MarkerClusterGroupWrapper images={filteredImages} highlight={!(currentSecond === images.length || currentSecond === 0)} />
+                    <MarkerClusterGroupWrapper images={filteredImages}
+                                               highlight={!(currentSecond === images.length || currentSecond === 0)}/>
 
-                {(currentSecond === images.length || currentSecond === 0) ?
-                    (<FitBounds positions={(filteredImages ?? []).map(img => [img.lat, img.lng])}/>) :
-                    (<FocusOnMarkers points={focusImageFilter}/>)}
+                    {(currentSecond === images.length || currentSecond === 0) ?
+                        (<FitBounds positions={(filteredImages ?? []).map(img => [img.lat, img.lng])}/>) :
+                        (<FocusOnMarkers points={focusImageFilter}/>)}
 
 
-            </MapContainer>
-            <div>
-                <button onClick={handleSetChina}>设置为 {isChina ? "外国" : "中国"}</button>
-                <input type="file" accept="image/*" multiple onChange={handleFolderSelect}/>
-                <button onClick={handleDelete}>删除全部</button>
-                <i> 当前有: {images.length} 张图片</i>
-            </div>
+                </MapContainer>
+                <div>
+                    <button onClick={handleSetChina}>设置为 {isChina ? "外国" : "中国"}</button>
+                    <input type="file" multiple onChange={handleFolderSelect}/>
+                    <button onClick={handleDelete}>删除全部</button>
+                    <i> 当前有: {images.length} 张图片</i>
+                </div>
 
             <div>
                 <Timeline
