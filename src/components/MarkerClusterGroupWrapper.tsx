@@ -54,7 +54,7 @@ export const MarkerClusterGroupWrapper: React.FC<ClusterProps> = ({ images , hig
         });
 
         const highlightImage = highlight ? images[images.length - 1] :null;
-        const normalImages = images.length > 1 ?  highlight ? images.slice(0, -1) : images : [];
+        const normalImages = images.length > 0 ?  highlight ? images.slice(0, -1) : images : [];
 
         normalImages.forEach((img) => {
             const marker = L.marker([img.lat, img.lng], { icon: defaultIcon });

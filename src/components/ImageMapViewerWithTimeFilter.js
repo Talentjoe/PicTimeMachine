@@ -142,9 +142,9 @@ function ImageMapViewerWithTimeFilter() {
                     }
 
                     <MarkerClusterGroupWrapper images={filteredImages}
-                                               highlight={!(currentSecond === images.length || currentSecond === 0)}/>
+                                               highlight={!(currentSecond === images.length+1 || currentSecond === 0)}/>
 
-                    {(currentSecond === images.length || currentSecond === 0) ?
+                    {(currentSecond === images.length+1 || currentSecond === 0) ?
                         (<FitBounds positions={(filteredImages ?? []).map(img => [img.lat, img.lng])}/>) :
                         (<FocusOnMarkers points={focusImageFilter}/>)}
 
@@ -162,7 +162,7 @@ function ImageMapViewerWithTimeFilter() {
                 <Timeline
                     ref={timelineRef}
                     startTime={0}
-                    endTime={images.length}
+                    endTime={images.length+1}
                     onSecondChange={handleSecondChange}
                 />
 
