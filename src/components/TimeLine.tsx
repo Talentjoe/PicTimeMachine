@@ -76,7 +76,6 @@ const Timeline = forwardRef<TimelineHandle, TimelineProps>(
             setCurrentTime(value);
             const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                 const value = parseFloat(e.target.value);
-                const delta = 0; // ✅ 只手动更新 currentTime，不往后推进时间
                 setCurrentTime(value);
 
                 // 触发整秒变化回调

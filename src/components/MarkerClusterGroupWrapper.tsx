@@ -92,7 +92,7 @@ export const MarkerClusterGroupWrapper: React.FC<ClusterProps> = ({ images , hig
                 map.removeLayer(highlightMarker);
             }
         };
-    }, [map, images]);
+    }, [map, images, highlight]);
 
 
     return null;
