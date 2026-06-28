@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   forwardRef,
@@ -10,41 +11,58 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
 
 interface TimelineProps {
-  startTime: number;
-  endTime: number;
+  /** Total length of the timeline in seconds (sum of all photo durations). */
+  totalDuration: number;
   /**
-   * Fired whenever the integer ("second") part of the cursor changes. Note: in
-   * this app the cursor is a *photo index*, not wall-clock time — see the
-   * project's CLAUDE.md. `0` (or `endTime`) means "show all".
+   * Start offset (seconds) of each photo, ascending, with boundaries[0] === 0.
+   * Used to map the smooth cursor time to the current photo index.
    */
-  onSecondChange?: (second: number) => void;
+  boundaries: number[];
+  /** Fired when the current photo index changes (not every frame). */
+  onIndexChange?: (index: number) => void;
+  /** Fired when the user starts playback or scrubs — used to exit overview mode. */
+  onUserInteract?: () => void;
 }
 
 export interface TimelineHandle {
-  getCurrentTime: () => number;
+  pause: () => void;
+}
+
+/** Largest i with boundaries[i] <= t; -1 when there are no photos. */
+function indexAt(t: number, boundaries: number[]): number {
+  let idx = -1;
+  for (let i = 0; i < boundaries.length; i++) {
+    if (boundaries[i] <= t) idx = i;
+    else break;
+  }
+  return idx;
 }
 
 const Timeline = forwardRef<TimelineHandle, TimelineProps>(
-  ({ startTime, endTime, onSecondChange }, ref) => {
-    const [currentTime, setCurrentTime] = useState(startTime);
+  ({ totalDuration, boundaries, onIndexChange, onUserInteract }, ref) => {
+    const [currentTime, setCurrentTime] = useState(0);
     const [playing, setPlaying] = useState(false);
     const [rate, setRate] = useState(1);
     const requestRef = useRef<number>(0);
     const lastUpdateTime = useRef<number>(Date.now());
-    const lastSecondRef = useRef<number>(Math.floor(startTime));
 
     useImperativeHandle(ref, () => ({
-      getCurrentTime: () => currentTime,
+      pause: () => setPlaying(false),
     }));
 
-    /** Emits onSecondChange only when the floored value actually changes. */
-    const emitSecond = (value: number) => {
-      const floored = Math.floor(value);
-      if (floored !== lastSecondRef.current) {
-        lastSecondRef.current = floored;
-        onSecondChange?.(floored);
-      }
-    };
+    const count = boundaries.length;
+    const currentIndex = useMemo(
+      () => indexAt(currentTime, boundaries),
+      [currentTime, boundaries]
+    );
+
+    // Emit only when the resolved photo index changes (time advance, scrub, or
+    // edited durations) — keeps the map from rebuilding layers every frame.
+    const onIndexChangeRef = useRef(onIndexChange);
+    onIndexChangeRef.current = onIndexChange;
+    useEffect(() => {
+      onIndexChangeRef.current?.(currentIndex);
+    }, [currentIndex]);
 
     useEffect(() => {
       if (!playing) return;
@@ -56,10 +74,9 @@ const Timeline = forwardRef<TimelineHandle, TimelineProps>(
 
         setCurrentTime((prev) => {
           const next = prev + delta * rate;
-          emitSecond(next);
-          if (next >= endTime) {
+          if (next >= totalDuration) {
             setPlaying(false);
-            return endTime;
+            return totalDuration;
           }
           return next;
         });
@@ -69,29 +86,47 @@ const Timeline = forwardRef<TimelineHandle, TimelineProps>(
 
       requestRef.current = requestAnimationFrame(update);
       return () => cancelAnimationFrame(requestRef.current);
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [playing, rate, endTime, onSecondChange]);
+    }, [playing, rate, totalDuration]);
 
     useEffect(() => {
       lastUpdateTime.current = Date.now();
     }, [playing]);
 
+    const handlePlayToggle = () => {
+      if (!playing) {
+        onUserInteract?.();
+        // Restart from the beginning if we're sitting at the end.
+        if (currentTime >= totalDuration) setCurrentTime(0);
+      }
+      setPlaying((p) => !p);
+    };
+
     const handleSliderChange = (_e: Event, value: number | number[]) => {
       const v = Array.isArray(value) ? value[0] : value;
+      onUserInteract?.();
       setCurrentTime(v);
-      emitSecond(v);
     };
+
+    const disabled = count === 0;
 
     return (
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 1 }}>
-          <Typography variant="body2" sx={{ minWidth: 96 }}>
-            当前图片: <strong>{Math.floor(currentTime)}</strong>
+          <Typography variant="body2" sx={{ minWidth: 150 }}>
+            {disabled ? (
+              '暂无图片'
+            ) : (
+              <>
+                第 <strong>{currentIndex + 1}</strong>/{count} 张 ·{' '}
+                {currentTime.toFixed(1)}s / {totalDuration.toFixed(1)}s
+              </>
+            )}
           </Typography>
 
           <IconButton
             color="primary"
-            onClick={() => setPlaying((p) => !p)}
+            onClick={handlePlayToggle}
+            disabled={disabled}
             aria-label={playing ? '暂停' : '播放'}
           >
             {playing ? <PauseIcon /> : <PlayArrowIcon />}
@@ -112,13 +147,14 @@ const Timeline = forwardRef<TimelineHandle, TimelineProps>(
         </Stack>
 
         <Slider
-          min={startTime}
-          max={endTime}
-          step={0.01}
+          min={0}
+          max={totalDuration || 1}
+          step={0.05}
           value={currentTime}
           onChange={handleSliderChange}
+          disabled={disabled}
           valueLabelDisplay="auto"
-          valueLabelFormat={(v) => Math.floor(v).toString()}
+          valueLabelFormat={(v) => `${v.toFixed(1)}s`}
         />
       </Paper>
     );

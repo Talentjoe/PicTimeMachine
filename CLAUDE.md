@@ -21,23 +21,26 @@ A pure client-side React + TypeScript app (Create React App) that reads EXIF GPS
 Everything is TypeScript (`.ts`/`.tsx`). Source is organized by feature under `src/`:
 
 - `App.tsx` — wraps the app in MUI `<ThemeProvider>`/`<CssBaseline>` (theme in `theme.ts`), shows a one-time welcome `<Dialog>` (gated by a `viewed` cookie via `react-cookies`), and renders `PhotoTrackPage`.
-- `types/photo.ts` — the shared data model `PhotoPoint` (nullable `lat/lng/date`), `LocatedPhoto`, and the `isLocated` type guard. `types/*.d.ts` declare untyped modules (`exif-js`, `react-cookies`); `react-app-env.d.ts` brings in CRA's asset-module types.
-- `lib/` — React-free pure logic. `exif.ts#readPhotosFromFiles` parses files into de-duplicated, date-sorted `PhotoPoint[]`. `geo.ts#wgs84ToGcj02` converts coordinates (see gotchas).
-- `features/photo-track/PhotoTrackPage.tsx` — the central state container + MUI layout.
+- `types/photo.ts` — the shared data model `PhotoPoint` (`id`, `path`, `description`, `duration`, nullable `lat/lng/date`), `LocatedPhoto`, the `isLocated` guard, and `newPhotoId()`. **The position of a photo in the `images` array IS its display order** (drag-reorder / sort-by-time just reorder the array). `types/*.d.ts` declare untyped modules (`exif-js`, `react-cookies`); `react-app-env.d.ts` brings in CRA's asset-module types.
+- `lib/` — React-free pure logic. `exif.ts#readPhotosFromFiles` parses files into de-duplicated, date-sorted `PhotoPoint[]`. `geo.ts#wgs84ToGcj02` converts coordinates (see gotchas). `project.ts` reads/writes the self-contained `.zip` project file (JSZip).
+- `features/photo-track/` — `PhotoTrackPage.tsx` (central state container + MUI layout) and `PhotoList.tsx` (drag-to-reorder list via `@dnd-kit`, with per-photo duration + delete).
 - `features/map/` — all Leaflet rendering; only `MapView` is exported. `tileSources.ts` holds the three basemaps + `selectTileSource`.
 - `features/timeline/Timeline.tsx` — the animated scrubber.
 
 Each `features/*` and `lib/` directory has a `README.md` describing its responsibility and data flow — read those when working in a module.
 
-**The timeline is an image index, not wall-clock time.** This is the key concept:
-- `Timeline.tsx` is a generic `0..N` animated scrubber (driven by `requestAnimationFrame`, with play/pause and a speed `rate`). It fires `onSecondChange(flooredInteger)` only when the integer part changes.
-- `PhotoTrackPage` passes `endTime={images.length+1}` and treats the emitted integer as `currentSecond`, used as a **slice index into the date-sorted located images**.
-- `currentSecond === 0` (or `=== images.length+1`) means "show everything" (`showAll`); any value in between means "show images `[0, currentSecond)`" — the trajectory up to that point. `showAll` also toggles highlight and which map-framing component runs.
+**The timeline is continuous wall-clock seconds with per-photo durations.** This is the key concept:
+- Each `PhotoPoint` has a `duration` (seconds, default 1 — "一秒一张"), editable in `PhotoList` and saved in the project file.
+- `PhotoTrackPage` derives, over the **located** photos, `boundaries` (each photo's cumulative start offset) and `total` (sum of durations), and passes them to `Timeline`.
+- `Timeline.tsx` smoothly advances `currentTime` (float seconds) via `requestAnimationFrame` × `rate`, resolves the current photo from `boundaries`, and fires `onIndexChange(index)` **only when the index changes** (not per frame — otherwise the map rebuilds layers every frame). It also fires `onUserInteract()` on play/scrub. `TimelineHandle.pause()` lets the parent stop playback.
+- **Overview is an explicit, separate mode** (`overview` state, default true), not a timeline endpoint. Overview → show all markers + FitBounds, no highlight. Playback (overview off) → show `located[0..currentIndex]`, highlight current, FocusOnMarkers. The 总览 button enters overview + pauses; `onUserInteract` exits it.
 
 Map-effect components (each calls `useMap()`, renders `null`, does imperative Leaflet work in `useEffect`), composed by `MapView`:
-- `MarkerClusterLayer.tsx` — `L.markerClusterGroup` with per-marker popup (name/date/thumbnail); when `highlight`, the most recent image gets a larger red icon + auto-opened popup.
+- `MarkerClusterLayer.tsx` — `L.markerClusterGroup`; popups are built as **DOM elements** (`buildPopup`) with an editable description `textarea` + save button wired through `onDescriptionChange(id, text)`. When `highlight`, the most recent image gets a larger red icon + auto-opened popup.
 - `FocusOnMarkers.tsx` — during playback, pans/zooms to the current point (single) or fits bounds (multiple).
-- `FitBounds.tsx` — fits the map to all visible markers (the `showAll` state).
+- `FitBounds.tsx` — fits the map to all visible markers (the overview/`showAll` state).
+
+**Project file** (`lib/project.ts`): a self-contained `.zip` = `manifest.json` (paths, descriptions, order, per-photo durations, coords, ISO dates) + every image's bytes. `exportProject` (with a `compress` DEFLATE/STORE toggle) and `importProject` round-trip a session with no folder re-pick. Keep manifest (de)serialization (`buildManifest`/`parseManifest`) pure and separate from the zip/blob I/O so it stays unit-testable (`project.test.ts`).
 
 ## Conventions & gotchas
 

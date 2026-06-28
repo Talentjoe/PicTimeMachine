@@ -20,6 +20,8 @@ interface MapViewProps {
   showAll: boolean;
   isChina: boolean;
   provider: ChinaProvider;
+  /** Called when the user edits a photo's description in its popup. */
+  onDescriptionChange?: (id: string, description: string) => void;
 }
 
 /** Re-projects WGS-84 coords to GCJ-02 when the active basemap requires it. */
@@ -38,6 +40,7 @@ const MapView: React.FC<MapViewProps> = ({
   showAll,
   isChina,
   provider,
+  onDescriptionChange,
 }) => {
   const source = selectTileSource(isChina, provider);
   const displayImages = useMemo(() => project(images, source.gcj02), [images, source.gcj02]);
@@ -52,7 +55,11 @@ const MapView: React.FC<MapViewProps> = ({
         {...(source.subdomains ? { subdomains: source.subdomains } : {})}
       />
 
-      <MarkerClusterLayer images={displayImages} highlight={highlight} />
+      <MarkerClusterLayer
+        images={displayImages}
+        highlight={highlight}
+        onDescriptionChange={onDescriptionChange}
+      />
 
       {showAll ? (
         <FitBounds positions={displayImages.map((img) => [img.lat, img.lng])} />

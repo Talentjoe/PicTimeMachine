@@ -1,15 +1,27 @@
 /**
- * A single photo parsed from a user-selected image file.
+ * A single photo parsed from a user-selected image file (or restored from a
+ * project file).
  *
  * `lat`/`lng`/`date` are nullable because not every image carries valid EXIF
  * GPS or timestamp data; such photos are still listed but filtered out of the
  * map. Coordinates are WGS-84 (the EXIF standard); conversion to GCJ-02 for
  * Chinese basemaps happens at render time in the map layer (see lib/geo.ts).
+ *
+ * The position of a PhotoPoint within the `images` array IS its display order
+ * (drag-to-reorder and sort-by-time simply reorder the array).
  */
 export interface PhotoPoint {
+  /** Stable id (used for React keys, drag-and-drop, and lookups). */
+  id: string;
   name: string;
+  /** Relative path (file.webkitRelativePath) or, if unavailable, the file name. */
+  path: string;
   /** Object URL created via URL.createObjectURL for in-browser preview. */
   url: string;
+  /** Optional user caption, shown in the marker popup and saved in the project file. */
+  description: string;
+  /** How many seconds this photo occupies on the timeline (default 1). */
+  duration: number;
   lat: number | null;
   lng: number | null;
   date: Date | null;
@@ -25,4 +37,12 @@ export interface LocatedPhoto extends PhotoPoint {
 /** Type guard: true when a photo has usable coordinates and timestamp. */
 export function isLocated(photo: PhotoPoint): photo is LocatedPhoto {
   return photo.lat != null && photo.lng != null && photo.date != null;
+}
+
+/** Generates a stable id, falling back when crypto.randomUUID is unavailable. */
+export function newPhotoId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `photo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }

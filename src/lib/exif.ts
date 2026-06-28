@@ -1,5 +1,8 @@
 import EXIF from 'exif-js';
-import type { PhotoPoint } from '../types/photo';
+import { newPhotoId, type PhotoPoint } from '../types/photo';
+
+/** Default seconds each photo occupies on the timeline ("一秒一张"). */
+export const DEFAULT_DURATION = 1;
 
 /** Converts an EXIF [deg, min, sec] tuple to a signed decimal degree. */
 export function dmsToDecimal(dms: [number, number, number], ref: string): number {
@@ -26,7 +29,7 @@ export function parseCustomTime(timeStr?: string): Date | null {
  * PhotoPoints sorted ascending by capture date.
  *
  * Existing photos can be passed in to append to (folder picks accumulate).
- * De-duplication is keyed by `name + date` — the previous `[...new Set(arr)]`
+ * De-duplication is keyed by `path + date` — the previous `[...new Set(arr)]`
  * over an object array was a no-op since Set compares object references.
  */
 export async function readPhotosFromFiles(
@@ -36,7 +39,7 @@ export async function readPhotosFromFiles(
   const imageFiles = files.filter((f) => f.type.startsWith('image/'));
   const byKey = new Map<string, PhotoPoint>();
 
-  const keyOf = (p: PhotoPoint) => `${p.name}|${p.date ? p.date.getTime() : 'na'}`;
+  const keyOf = (p: PhotoPoint) => `${p.path}|${p.date ? p.date.getTime() : 'na'}`;
   for (const photo of existing) byKey.set(keyOf(photo), photo);
 
   for (const file of imageFiles) {
@@ -52,8 +55,12 @@ export async function readPhotosFromFiles(
       const date = parseCustomTime(exifData.DateTimeOriginal);
 
       const photo: PhotoPoint = {
+        id: newPhotoId(),
         name: file.name,
+        path: file.webkitRelativePath || file.name,
         url: URL.createObjectURL(file),
+        description: '',
+        duration: DEFAULT_DURATION,
         lat,
         lng,
         date,
