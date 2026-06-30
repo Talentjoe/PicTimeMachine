@@ -1,15 +1,17 @@
 import { useMap } from 'react-leaflet';
 import { useEffect } from 'react';
 import L from 'leaflet';
+import { DEFAULT_ZOOM } from '../../types/photo';
 
 interface FocusProps {
-  points: { lat: number; lng: number }[];
+  points: { lat: number; lng: number; zoom?: number }[];
 }
 
 /**
  * During playback, pans/zooms the map to the currently-active photo:
  * a single point is centered (with a vertical offset to leave room for its
- * popup); multiple points are framed via fitBounds.
+ * popup) at that photo's configured zoom; multiple points are framed via
+ * fitBounds.
  */
 const FocusOnMarkers: React.FC<FocusProps> = ({ points }) => {
   const map = useMap();
@@ -18,7 +20,7 @@ const FocusOnMarkers: React.FC<FocusProps> = ({ points }) => {
     if (points.length === 0) return;
 
     if (points.length === 1) {
-      const zoom = 13;
+      const zoom = points[0].zoom ?? DEFAULT_ZOOM;
       const targetLatLng = L.latLng(points[0].lat, points[0].lng);
       const targetPoint = map.project(targetLatLng, zoom);
       const offsetPoint = targetPoint.subtract([0, 150]);

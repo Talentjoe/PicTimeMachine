@@ -5,9 +5,11 @@ import './icons'; // registers the default Leaflet marker icon (side effect)
 import { MarkerClusterLayer } from './MarkerClusterLayer';
 import FocusOnMarkers from './FocusOnMarkers';
 import FitBounds from './FitBounds';
+import CollectionsLayer, { type CollectionShape } from './CollectionsLayer';
 import { selectTileSource, type ChinaProvider } from './tileSources';
 import { wgs84ToGcj02 } from '../../lib/geo';
 import type { LocatedPhoto } from '../../types/photo';
+import type { Collection } from '../../types/collection';
 
 interface MapViewProps {
   /** All currently-visible photos (already filtered to located ones). */
@@ -22,6 +24,10 @@ interface MapViewProps {
   provider: ChinaProvider;
   /** Called when the user edits a photo's description in its popup. */
   onDescriptionChange?: (id: string, description: string) => void;
+  /** Collections to draw as convex-hull polygons (when showCollections). */
+  collections?: Collection[];
+  showCollections?: boolean;
+  onSelectCollection?: (id: string) => void;
 }
 
 /** Re-projects WGS-84 coords to GCJ-02 when the active basemap requires it. */
@@ -41,10 +47,27 @@ const MapView: React.FC<MapViewProps> = ({
   isChina,
   provider,
   onDescriptionChange,
+  collections,
+  showCollections,
+  onSelectCollection,
 }) => {
   const source = selectTileSource(isChina, provider);
   const displayImages = useMemo(() => project(images, source.gcj02), [images, source.gcj02]);
   const displayFocus = useMemo(() => project(focusImages, source.gcj02), [focusImages, source.gcj02]);
+
+  // Pair each collection with its members' projected coords, for hull drawing.
+  const collectionShapes = useMemo<CollectionShape[]>(() => {
+    if (!showCollections || !collections) return [];
+    const idToLatLng = new Map<string, [number, number]>(
+      displayImages.map((img) => [img.id, [img.lat, img.lng] as [number, number]])
+    );
+    return collections.map((collection) => ({
+      collection,
+      points: collection.photoIds
+        .map((id) => idToLatLng.get(id))
+        .filter((p): p is [number, number] => p !== undefined),
+    }));
+  }, [showCollections, collections, displayImages]);
 
   return (
     <MapContainer center={[0, 0]} zoom={3} style={{ height: '100%', width: '100%' }}>
@@ -60,6 +83,10 @@ const MapView: React.FC<MapViewProps> = ({
         highlight={highlight}
         onDescriptionChange={onDescriptionChange}
       />
+
+      {showCollections && (
+        <CollectionsLayer shapes={collectionShapes} onSelectCollection={onSelectCollection} />
+      )}
 
       {showAll ? (
         <FitBounds positions={displayImages.map((img) => [img.lat, img.lng])} />

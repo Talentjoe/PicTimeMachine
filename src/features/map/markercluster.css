@@ -56,3 +56,19 @@
 .photo-popup__save:hover {
     background-color: #276153;
 }
+
+.collection-popup {
+    min-width: 160px;
+}
+
+.collection-popup__comment {
+    margin-top: 6px;
+    font-size: 13px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.collection-popup__comment:empty::before {
+    content: '（无备注）';
+    color: #999;
+}

@@ -21,10 +21,10 @@ A pure client-side React + TypeScript app (Create React App) that reads EXIF GPS
 Everything is TypeScript (`.ts`/`.tsx`). Source is organized by feature under `src/`:
 
 - `App.tsx` — wraps the app in MUI `<ThemeProvider>`/`<CssBaseline>` (theme in `theme.ts`), shows a one-time welcome `<Dialog>` (gated by a `viewed` cookie via `react-cookies`), and renders `PhotoTrackPage`.
-- `types/photo.ts` — the shared data model `PhotoPoint` (`id`, `path`, `description`, `duration`, nullable `lat/lng/date`), `LocatedPhoto`, the `isLocated` guard, and `newPhotoId()`. **The position of a photo in the `images` array IS its display order** (drag-reorder / sort-by-time just reorder the array). `types/*.d.ts` declare untyped modules (`exif-js`, `react-cookies`); `react-app-env.d.ts` brings in CRA's asset-module types.
-- `lib/` — React-free pure logic. `exif.ts#readPhotosFromFiles` parses files into de-duplicated, date-sorted `PhotoPoint[]`. `geo.ts#wgs84ToGcj02` converts coordinates (see gotchas). `project.ts` reads/writes the self-contained `.zip` project file (JSZip).
-- `features/photo-track/` — `PhotoTrackPage.tsx` (central state container + MUI layout) and `PhotoList.tsx` (drag-to-reorder list via `@dnd-kit`, with per-photo duration + delete).
-- `features/map/` — all Leaflet rendering; only `MapView` is exported. `tileSources.ts` holds the three basemaps + `selectTileSource`.
+- `types/photo.ts` — the shared data model `PhotoPoint` (`id`, `path`, `description`, `duration`, optional `zoom`, nullable `lat/lng/date`), `LocatedPhoto`, the `isLocated` guard, `newId`/`newPhotoId`, `DEFAULT_ZOOM`. **The position of a photo in the `images` array IS its display order** (drag-reorder / sort-by-time just reorder the array). `types/collection.ts` — `Collection` (many-to-many `photoIds`, `comment`, `color`) + palette helpers. `types/*.d.ts` declare untyped modules (`exif-js`, `react-cookies`); `react-app-env.d.ts` brings in CRA's asset-module types.
+- `lib/` — React-free pure logic. `exif.ts#readPhotosFromFiles` parses files into de-duplicated, date-sorted `PhotoPoint[]`. `geo.ts#wgs84ToGcj02` converts coordinates (see gotchas). `hull.ts#convexHull` for collection regions. `project.ts` reads/writes project files (JSZip).
+- `features/photo-track/` — `PhotoTrackPage.tsx` (central state container + MUI layout), `PhotoList.tsx` (drag-to-reorder list via `@dnd-kit`, with selection checkbox, per-photo duration/zoom, delete, collection chips), `CollectionsPanel.tsx` (create/edit/delete collections + comment).
+- `features/map/` — all Leaflet rendering; only `MapView` is exported. `tileSources.ts` holds the three basemaps + `selectTileSource`; `CollectionsLayer.tsx` draws collection hull polygons.
 - `features/timeline/Timeline.tsx` — the animated scrubber.
 
 Each `features/*` and `lib/` directory has a `README.md` describing its responsibility and data flow — read those when working in a module.
@@ -33,14 +33,22 @@ Each `features/*` and `lib/` directory has a `README.md` describing its responsi
 - Each `PhotoPoint` has a `duration` (seconds, default 1 — "一秒一张"), editable in `PhotoList` and saved in the project file.
 - `PhotoTrackPage` derives, over the **located** photos, `boundaries` (each photo's cumulative start offset) and `total` (sum of durations), and passes them to `Timeline`.
 - `Timeline.tsx` smoothly advances `currentTime` (float seconds) via `requestAnimationFrame` × `rate`, resolves the current photo from `boundaries`, and fires `onIndexChange(index)` **only when the index changes** (not per frame — otherwise the map rebuilds layers every frame). It also fires `onUserInteract()` on play/scrub. `TimelineHandle.pause()` lets the parent stop playback.
-- **Overview is an explicit, separate mode** (`overview` state, default true), not a timeline endpoint. Overview → show all markers + FitBounds, no highlight. Playback (overview off) → show `located[0..currentIndex]`, highlight current, FocusOnMarkers. The 总览 button enters overview + pauses; `onUserInteract` exits it.
+**The map has three explicit modes** (`mode` state in `PhotoTrackPage`, default `overview`), not implicit timeline endpoints:
+- `overview` → all located markers + FitBounds, no highlight.
+- `playback` → `located[0..currentIndex]`, highlight current, FocusOnMarkers (at the current photo's `zoom`).
+- `collections` → photos of the visible collection(s) + their convex-hull polygons + FitBounds.
+The 总览/组合 buttons switch mode + pause; `onUserInteract` switches to `playback`.
 
 Map-effect components (each calls `useMap()`, renders `null`, does imperative Leaflet work in `useEffect`), composed by `MapView`:
 - `MarkerClusterLayer.tsx` — `L.markerClusterGroup`; popups are built as **DOM elements** (`buildPopup`) with an editable description `textarea` + save button wired through `onDescriptionChange(id, text)`. When `highlight`, the most recent image gets a larger red icon + auto-opened popup.
-- `FocusOnMarkers.tsx` — during playback, pans/zooms to the current point (single) or fits bounds (multiple).
-- `FitBounds.tsx` — fits the map to all visible markers (the overview/`showAll` state).
+- `FocusOnMarkers.tsx` — during playback, pans/zooms to the current point at its `zoom ?? DEFAULT_ZOOM` (single) or fits bounds (multiple).
+- `FitBounds.tsx` — fits the map to all visible markers (overview/collections).
+- `CollectionsLayer.tsx` — draws each collection's convex-hull polygon (skipped when < 3 located members) with a name/comment popup.
 
-**Project file** (`lib/project.ts`): a self-contained `.zip` = `manifest.json` (paths, descriptions, order, per-photo durations, coords, ISO dates) + every image's bytes. `exportProject` (with a `compress` DEFLATE/STORE toggle) and `importProject` round-trip a session with no folder re-pick. Keep manifest (de)serialization (`buildManifest`/`parseManifest`) pure and separate from the zip/blob I/O so it stays unit-testable (`project.test.ts`).
+**Project file** (`lib/project.ts`, manifest **v2**): two save modes sharing one manifest schema (paths, descriptions, order, durations, zoom, coords, ISO dates, **collections**, and each photo's persisted `id`).
+- **Full** = self-contained `.zip` (`exportProject` with `compress` DEFLATE/STORE toggle) + `importProject` — round-trips with no folder re-pick.
+- **Reference** = metadata-only `.json` (`exportReference`) + `parseReferenceJson` then `applyReference(manifest, files)` — the user re-selects the original files and entries match by `path` then `name`.
+- Photo `id`s are persisted and reused on import so `collection.photoIds` stay linked. Keep manifest (de)serialization (`buildManifest`/`parseManifest`, with v1 back-compat) pure and separate from zip/blob I/O so it stays unit-testable (`project.test.ts`, `hull.test.ts`).
 
 ## Conventions & gotchas
 

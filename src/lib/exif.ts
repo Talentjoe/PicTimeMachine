@@ -1,5 +1,5 @@
 import EXIF from 'exif-js';
-import { newPhotoId, type PhotoPoint } from '../types/photo';
+import { newPhotoId, DEFAULT_ZOOM, type PhotoPoint } from '../types/photo';
 
 /** Default seconds each photo occupies on the timeline ("一秒一张"). */
 export const DEFAULT_DURATION = 1;
@@ -61,6 +61,7 @@ export async function readPhotosFromFiles(
         url: URL.createObjectURL(file),
         description: '',
         duration: DEFAULT_DURATION,
+        zoom: DEFAULT_ZOOM,
         lat,
         lng,
         date,

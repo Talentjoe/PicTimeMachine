@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -13,28 +14,50 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Box, Stack, Typography, TextField, IconButton, Avatar } from '@mui/material';
+import { Box, Stack, Typography, TextField, IconButton, Avatar, Checkbox, Chip } from '@mui/material';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import RoomIcon from '@mui/icons-material/Room';
 import LocationOffIcon from '@mui/icons-material/LocationOff';
-import { isLocated, type PhotoPoint } from '../../types/photo';
+import { isLocated, DEFAULT_ZOOM, type PhotoPoint } from '../../types/photo';
+import type { Collection } from '../../types/collection';
 
 interface PhotoListProps {
   photos: PhotoPoint[];
+  collections: Collection[];
+  selectedIds: Set<string>;
+  /** When true, show the per-photo zoom-level control. */
+  advanced: boolean;
   onReorder: (photos: PhotoPoint[]) => void;
   onDeleteOne: (id: string) => void;
   onDurationChange: (id: string, seconds: number) => void;
+  onZoomChange: (id: string, zoom: number) => void;
+  onToggleSelect: (id: string) => void;
 }
 
 interface RowProps {
   photo: PhotoPoint;
   index: number;
+  selected: boolean;
+  advanced: boolean;
+  memberships: { name: string; color: string }[];
   onDeleteOne: (id: string) => void;
   onDurationChange: (id: string, seconds: number) => void;
+  onZoomChange: (id: string, zoom: number) => void;
+  onToggleSelect: (id: string) => void;
 }
 
-const SortableRow: React.FC<RowProps> = ({ photo, index, onDeleteOne, onDurationChange }) => {
+const SortableRow: React.FC<RowProps> = ({
+  photo,
+  index,
+  selected,
+  advanced,
+  memberships,
+  onDeleteOne,
+  onDurationChange,
+  onZoomChange,
+  onToggleSelect,
+}) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: photo.id,
   });
@@ -54,6 +77,14 @@ const SortableRow: React.FC<RowProps> = ({ photo, index, onDeleteOne, onDuration
       alignItems="center"
       sx={{ py: 1, px: 1, borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'background.paper' }}
     >
+      <Checkbox
+        size="small"
+        checked={selected}
+        onChange={() => onToggleSelect(photo.id)}
+        sx={{ p: 0.5 }}
+        inputProps={{ 'aria-label': '选择' }}
+      />
+
       <IconButton size="small" {...attributes} {...listeners} sx={{ cursor: 'grab' }} aria-label="拖动排序">
         <DragIndicatorIcon fontSize="small" />
       </IconButton>
@@ -68,16 +99,43 @@ const SortableRow: React.FC<RowProps> = ({ photo, index, onDeleteOne, onDuration
         <Typography variant="body2" noWrap title={photo.name}>
           {photo.name}
         </Typography>
-        <Typography variant="caption" color="text.secondary" noWrap>
+        <Typography variant="caption" color="text.secondary" noWrap component="div">
           {photo.date ? photo.date.toLocaleString() : '无时间信息'}
           {photo.description ? ` · ${photo.description}` : ''}
         </Typography>
+        {memberships.length > 0 && (
+          <Stack direction="row" spacing={0.5} sx={{ mt: 0.5, flexWrap: 'wrap', gap: 0.5 }}>
+            {memberships.map((m) => (
+              <Chip
+                key={m.name}
+                label={m.name}
+                size="small"
+                sx={{ bgcolor: m.color, color: '#fff', height: 18, '& .MuiChip-label': { px: 0.75, fontSize: 11 } }}
+              />
+            ))}
+          </Stack>
+        )}
       </Box>
 
       {isLocated(photo) ? (
         <RoomIcon fontSize="small" color="action" titleAccess="含位置信息" />
       ) : (
         <LocationOffIcon fontSize="small" color="disabled" titleAccess="无位置信息（不在地图显示）" />
+      )}
+
+      {advanced && (
+        <TextField
+          label="缩放"
+          type="number"
+          size="small"
+          value={photo.zoom ?? DEFAULT_ZOOM}
+          onChange={(e) => {
+            const v = parseInt(e.target.value, 10);
+            if (!Number.isNaN(v)) onZoomChange(photo.id, Math.min(19, Math.max(1, v)));
+          }}
+          inputProps={{ step: 1, min: 1, max: 19 }}
+          sx={{ width: 80 }}
+        />
       )}
 
       <TextField
@@ -105,16 +163,34 @@ const SortableRow: React.FC<RowProps> = ({ photo, index, onDeleteOne, onDuration
   );
 };
 
-/** Drag-to-reorder photo list with per-photo duration and delete controls. */
+/** Drag-to-reorder photo list with selection, per-photo duration/zoom and delete. */
 const PhotoList: React.FC<PhotoListProps> = ({
   photos,
+  collections,
+  selectedIds,
+  advanced,
   onReorder,
   onDeleteOne,
   onDurationChange,
+  onZoomChange,
+  onToggleSelect,
 }) => {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
+
+  // photoId -> the collections it belongs to (for chips).
+  const membershipByPhoto = useMemo(() => {
+    const map = new Map<string, { name: string; color: string }[]>();
+    for (const c of collections) {
+      for (const id of c.photoIds) {
+        const list = map.get(id) ?? [];
+        list.push({ name: c.name, color: c.color });
+        map.set(id, list);
+      }
+    }
+    return map;
+  }, [collections]);
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -141,8 +217,13 @@ const PhotoList: React.FC<PhotoListProps> = ({
             key={photo.id}
             photo={photo}
             index={i}
+            selected={selectedIds.has(photo.id)}
+            advanced={advanced}
+            memberships={membershipByPhoto.get(photo.id) ?? []}
             onDeleteOne={onDeleteOne}
             onDurationChange={onDurationChange}
+            onZoomChange={onZoomChange}
+            onToggleSelect={onToggleSelect}
           />
         ))}
       </SortableContext>

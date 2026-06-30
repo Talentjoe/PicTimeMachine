@@ -22,10 +22,15 @@ export interface PhotoPoint {
   description: string;
   /** How many seconds this photo occupies on the timeline (default 1). */
   duration: number;
+  /** Map zoom level to use when focusing this photo during playback (default DEFAULT_ZOOM). */
+  zoom?: number;
   lat: number | null;
   lng: number | null;
   date: Date | null;
 }
+
+/** Default map zoom level when focusing a single photo. */
+export const DEFAULT_ZOOM = 13;
 
 /** A PhotoPoint guaranteed to have coordinates and a date (post-filter). */
 export interface LocatedPhoto extends PhotoPoint {
@@ -40,9 +45,14 @@ export function isLocated(photo: PhotoPoint): photo is LocatedPhoto {
 }
 
 /** Generates a stable id, falling back when crypto.randomUUID is unavailable. */
-export function newPhotoId(): string {
+export function newId(prefix = 'id'): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return crypto.randomUUID();
   }
-  return `photo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/** Generates a stable photo id. */
+export function newPhotoId(): string {
+  return newId('photo');
 }
