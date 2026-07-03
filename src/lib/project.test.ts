@@ -1,6 +1,7 @@
 import { buildManifest, serializeManifest, parseManifest, type ProjectSettings } from './project';
 import type { PhotoPoint } from '../types/photo';
 import type { Collection } from '../types/collection';
+import type { TimelineClip } from '../types/timeline';
 
 const settings: ProjectSettings = { defaultDuration: 1, isChina: true, provider: 'amap' };
 
@@ -34,13 +35,20 @@ const collections: Collection[] = [
   { id: 'c1', name: '第一天', comment: '北京一日', color: '#e0533d', photoIds: ['a', 'b'] },
 ];
 
+const timeline: TimelineClip[] = [
+  { id: 'clip-1', kind: 'photo', refId: 'a', moveDuration: 1.5, holdDuration: 3, zoom: 16 },
+  { id: 'clip-2', kind: 'gap', moveDuration: 0, holdDuration: 2 },
+  { id: 'clip-3', kind: 'collection', refId: 'c1', moveDuration: 1, holdDuration: 2 },
+  { id: 'clip-4', kind: 'photo', refId: 'a', moveDuration: 1, holdDuration: 2 }, // same photo twice
+];
+
 describe('manifest round-trip', () => {
-  it('preserves order, descriptions, durations, zoom, dates, ids and collections', () => {
+  it('preserves order, descriptions, durations, zoom, dates, ids, collections and timeline', () => {
     const manifest = parseManifest(
-      serializeManifest(buildManifest(photos, settings, collections, 'full'))
+      serializeManifest(buildManifest(photos, settings, collections, timeline, 'full'))
     );
 
-    expect(manifest.version).toBe(2);
+    expect(manifest.version).toBe(3);
     expect(manifest.mode).toBe('full');
     expect(manifest.settings).toEqual(settings);
     expect(manifest.collections).toEqual(collections);
@@ -57,27 +65,35 @@ describe('manifest round-trip', () => {
     expect(b.zoom).toBe(13); // DEFAULT_ZOOM applied to undefined
     expect(b.lat).toBeNull();
     expect(b.date).toBeNull();
+
+    // Timeline round-trips intact, including a photo referenced twice and a gap.
+    expect(manifest.timeline).toEqual(timeline);
   });
 
   it('records the reference mode flag', () => {
-    const manifest = buildManifest(photos, settings, collections, 'reference');
+    const manifest = buildManifest(photos, settings, collections, timeline, 'reference');
     expect(manifest.mode).toBe('reference');
   });
 
-  it('rejects an unrecognised manifest', () => {
+  it('rejects an unrecognised or legacy manifest', () => {
     expect(() => parseManifest('{"version":99}')).toThrow();
+    expect(() => parseManifest('{"version":2,"photos":[]}')).toThrow();
   });
 
-  it('upgrades a legacy v1 manifest (no collections/zoom)', () => {
-    const legacy = JSON.stringify({
-      version: 1,
+  it('generates a default timeline (one clip per located photo) when none is stored', () => {
+    const raw = JSON.stringify({
+      version: 3,
+      mode: 'full',
       settings,
-      photos: [{ file: 'images/0.jpg', name: 'x.jpg', path: 'x.jpg', description: '', duration: 1, lat: null, lng: null, date: null }],
+      collections: [],
+      photos: [
+        { id: 'a', file: 'images/0.jpg', name: 'a.jpg', path: 'a.jpg', lat: 1, lng: 2, date: '2024-01-01T00:00:00.000Z' },
+        { id: 'b', file: 'images/1.jpg', name: 'b.jpg', path: 'b.jpg', lat: null, lng: null, date: null },
+      ],
     });
-    const manifest = parseManifest(legacy);
-    expect(manifest.version).toBe(2);
-    expect(manifest.collections).toEqual([]);
-    expect(manifest.photos[0].zoom).toBe(13);
-    expect(typeof manifest.photos[0].id).toBe('string');
+    const manifest = parseManifest(raw);
+    expect(manifest.timeline).toHaveLength(1); // only the located photo
+    expect(manifest.timeline[0].kind).toBe('photo');
+    expect(manifest.timeline[0].refId).toBe('a');
   });
 });

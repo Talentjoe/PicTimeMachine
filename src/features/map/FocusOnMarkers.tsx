@@ -1,38 +1,39 @@
 import { useMap } from 'react-leaflet';
 import { useEffect } from 'react';
 import L from 'leaflet';
-import { DEFAULT_ZOOM } from '../../types/photo';
 
 interface FocusProps {
-  points: { lat: number; lng: number; zoom?: number }[];
+  /** The single point to focus, already in the active basemap datum. */
+  point: { lat: number; lng: number; zoom: number } | null;
+  /** Seconds the fly animation should take (matches the clip's move phase). */
+  moveDuration: number;
+  /** When true, fly with animation; when false (scrubbing/paused), jump instantly. */
+  animate: boolean;
 }
 
 /**
- * During playback, pans/zooms the map to the currently-active photo:
- * a single point is centered (with a vertical offset to leave room for its
- * popup) at that photo's configured zoom; multiple points are framed via
- * fitBounds.
+ * During playback, flies the map to the current clip's photo over `moveDuration`
+ * seconds (pan + zoom share the same duration so the camera motion stays in sync
+ * with the timeline). When `animate` is false the view jumps instantly, which
+ * keeps scrubbing snappy and interruptible (non-blocking). A small vertical
+ * offset leaves room for the photo overlay / popup.
  */
-const FocusOnMarkers: React.FC<FocusProps> = ({ points }) => {
+const FocusOnMarkers: React.FC<FocusProps> = ({ point, moveDuration, animate }) => {
   const map = useMap();
+  const lat = point?.lat ?? null;
+  const lng = point?.lng ?? null;
+  const zoom = point?.zoom ?? null;
 
   useEffect(() => {
-    if (points.length === 0) return;
-
-    if (points.length === 1) {
-      const zoom = points[0].zoom ?? DEFAULT_ZOOM;
-      const targetLatLng = L.latLng(points[0].lat, points[0].lng);
-      const targetPoint = map.project(targetLatLng, zoom);
-      const offsetPoint = targetPoint.subtract([0, 150]);
-      const offsetLatLng = map.unproject(offsetPoint, zoom);
-
-      map.setZoom(zoom);
-      map.panTo(offsetLatLng, { animate: true, duration: 1.0 });
+    if (lat == null || lng == null || zoom == null) return;
+    const targetPoint = map.project(L.latLng(lat, lng), zoom);
+    const offsetLatLng = map.unproject(targetPoint.subtract([0, 80]), zoom);
+    if (animate) {
+      map.flyTo(offsetLatLng, zoom, { duration: Math.max(0, moveDuration) });
     } else {
-      const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng]));
-      map.fitBounds(bounds, { padding: [40, 40] });
+      map.setView(offsetLatLng, zoom, { animate: false });
     }
-  }, [map, points]);
+  }, [map, lat, lng, zoom, moveDuration, animate]);
 
   return null;
 };

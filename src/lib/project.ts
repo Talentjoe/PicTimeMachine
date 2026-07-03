@@ -1,6 +1,13 @@
 import JSZip from 'jszip';
 import { newPhotoId, DEFAULT_ZOOM, type PhotoPoint } from '../types/photo';
 import type { Collection } from '../types/collection';
+import {
+  DEFAULT_MOVE,
+  DEFAULT_HOLD,
+  newClipId,
+  type TimelineClip,
+  type ClipKind,
+} from '../types/timeline';
 
 /** Global settings persisted alongside the photos in a project file. */
 export interface ProjectSettings {
@@ -11,12 +18,13 @@ export interface ProjectSettings {
 
 /** One photo entry inside the manifest. `file` is its path within the zip. */
 export interface ManifestPhoto {
-  /** Persisted so collections (which reference photo ids) survive a reload. */
+  /** Persisted so collections + clips (which reference photo ids) survive a reload. */
   id: string;
   file: string;
   name: string;
   path: string;
   description: string;
+  /** Default seconds suggested for new clips of this photo. */
   duration: number;
   zoom: number;
   lat: number | null;
@@ -25,22 +33,28 @@ export interface ManifestPhoto {
   date: string | null;
 }
 
+/** One timeline clip inside the manifest (same shape as a runtime TimelineClip). */
+export type ManifestClip = TimelineClip;
+
 export type ProjectMode = 'full' | 'reference';
 
 export interface Manifest {
-  version: 2;
+  version: 3;
   /** 'full' = images bundled in the zip; 'reference' = metadata-only .json. */
   mode: ProjectMode;
   settings: ProjectSettings;
-  /** Array order is the display order. */
+  /** The photo bin. Array order is the bin order (independent of the timeline). */
   photos: ManifestPhoto[];
   collections: Collection[];
+  /** The ordered timeline track of clips. */
+  timeline: ManifestClip[];
 }
 
 /** Result of loading any project file. */
 export interface LoadedProject {
   photos: PhotoPoint[];
   collections: Collection[];
+  timeline: TimelineClip[];
 }
 
 const MANIFEST_NAME = 'manifest.json';
@@ -52,22 +66,44 @@ function zipEntryName(photo: PhotoPoint, index: number): string {
   return `${IMAGE_DIR}/${String(index).padStart(4, '0')}_${safe}`;
 }
 
+/** Builds a default timeline (one photo clip per located manifest photo). */
+function defaultTimeline(photos: ManifestPhoto[]): ManifestClip[] {
+  return photos
+    .filter((p) => p.lat != null && p.lng != null && p.date != null)
+    .map((p) => ({
+      id: newClipId(),
+      kind: 'photo' as ClipKind,
+      refId: p.id,
+      moveDuration: DEFAULT_MOVE,
+      holdDuration: DEFAULT_HOLD,
+    }));
+}
+
 /**
  * Builds the manifest (pure). Assigns each photo a deterministic zip entry name
- * so exportProject and the manifest agree on file locations. Array order is
- * preserved as display order.
+ * so exportProject and the manifest agree on file locations. Photo array order
+ * is the bin order; the timeline is stored separately.
  */
 export function buildManifest(
   photos: PhotoPoint[],
   settings: ProjectSettings,
   collections: Collection[],
+  timeline: TimelineClip[],
   mode: ProjectMode
 ): Manifest {
   return {
-    version: 2,
+    version: 3,
     mode,
     settings,
     collections,
+    timeline: timeline.map((c) => ({
+      id: c.id,
+      kind: c.kind,
+      refId: c.refId,
+      moveDuration: c.moveDuration,
+      holdDuration: c.holdDuration,
+      zoom: c.zoom,
+    })),
     photos: photos.map((p, i) => ({
       id: p.id,
       file: zipEntryName(p, i),
@@ -87,7 +123,20 @@ export function serializeManifest(manifest: Manifest): string {
   return JSON.stringify(manifest, null, 2);
 }
 
-/** Parses + normalises a manifest, tolerating older v1 files. */
+/** Normalises one raw clip entry, filling in missing fields. */
+function normalizeClip(c: Partial<ManifestClip>): ManifestClip {
+  const kind: ClipKind = c.kind === 'collection' || c.kind === 'gap' ? c.kind : 'photo';
+  return {
+    id: c.id ?? newClipId(),
+    kind,
+    refId: kind === 'gap' ? undefined : c.refId,
+    moveDuration: c.moveDuration ?? (kind === 'gap' ? 0 : DEFAULT_MOVE),
+    holdDuration: c.holdDuration ?? DEFAULT_HOLD,
+    zoom: c.zoom,
+  };
+}
+
+/** Parses + normalises a v3 manifest (older formats are not supported). */
 export function parseManifest(json: string): Manifest {
   const parsed = JSON.parse(json) as {
     version?: number;
@@ -95,27 +144,34 @@ export function parseManifest(json: string): Manifest {
     settings?: ProjectSettings;
     collections?: Collection[];
     photos?: Partial<ManifestPhoto>[];
+    timeline?: Partial<ManifestClip>[];
   };
-  if (!parsed || (parsed.version !== 1 && parsed.version !== 2) || !Array.isArray(parsed.photos)) {
-    throw new Error('无法识别的项目文件（manifest 格式不正确）');
+  if (!parsed || parsed.version !== 3 || !Array.isArray(parsed.photos)) {
+    throw new Error('无法识别的项目文件（manifest 格式不正确或版本过旧）');
   }
+  const photos: ManifestPhoto[] = parsed.photos.map((p) => ({
+    id: p.id ?? newPhotoId(),
+    file: p.file ?? '',
+    name: p.name ?? '',
+    path: p.path ?? p.name ?? '',
+    description: p.description ?? '',
+    duration: p.duration ?? parsed.settings?.defaultDuration ?? 1,
+    zoom: p.zoom ?? DEFAULT_ZOOM,
+    lat: p.lat ?? null,
+    lng: p.lng ?? null,
+    date: p.date ?? null,
+  }));
+  const timeline =
+    Array.isArray(parsed.timeline) && parsed.timeline.length
+      ? parsed.timeline.map(normalizeClip)
+      : defaultTimeline(photos);
   return {
-    version: 2,
+    version: 3,
     mode: parsed.mode ?? 'full',
     settings: parsed.settings ?? { defaultDuration: 1, isChina: false, provider: 'amap' },
     collections: Array.isArray(parsed.collections) ? parsed.collections : [],
-    photos: parsed.photos.map((p) => ({
-      id: p.id ?? newPhotoId(),
-      file: p.file ?? '',
-      name: p.name ?? '',
-      path: p.path ?? p.name ?? '',
-      description: p.description ?? '',
-      duration: p.duration ?? parsed.settings?.defaultDuration ?? 1,
-      zoom: p.zoom ?? DEFAULT_ZOOM,
-      lat: p.lat ?? null,
-      lng: p.lng ?? null,
-      date: p.date ?? null,
-    })),
+    photos,
+    timeline,
   };
 }
 
@@ -141,6 +197,21 @@ function pruneCollections(collections: Collection[], photos: PhotoPoint[]): Coll
   return collections.map((c) => ({ ...c, photoIds: c.photoIds.filter((id) => ids.has(id)) }));
 }
 
+/** Drops clips whose referenced photo/collection no longer exists (gaps always kept). */
+function pruneTimeline(
+  timeline: TimelineClip[],
+  photos: PhotoPoint[],
+  collections: Collection[]
+): TimelineClip[] {
+  const photoIds = new Set(photos.map((p) => p.id));
+  const colIds = new Set(collections.map((c) => c.id));
+  return timeline.filter((c) => {
+    if (c.kind === 'photo') return c.refId != null && photoIds.has(c.refId);
+    if (c.kind === 'collection') return c.refId != null && colIds.has(c.refId);
+    return true;
+  });
+}
+
 /**
  * Builds a self-contained .zip project: manifest.json + every image's bytes.
  * Re-openable with importProject without re-selecting the original folder.
@@ -150,9 +221,10 @@ export async function exportProject(
   photos: PhotoPoint[],
   settings: ProjectSettings,
   collections: Collection[],
+  timeline: TimelineClip[],
   opts: { compress: boolean }
 ): Promise<Blob> {
-  const manifest = buildManifest(photos, settings, collections, 'full');
+  const manifest = buildManifest(photos, settings, collections, timeline, 'full');
   const zip = new JSZip();
   zip.file(MANIFEST_NAME, serializeManifest(manifest));
 
@@ -173,9 +245,10 @@ export async function exportProject(
 export function exportReference(
   photos: PhotoPoint[],
   settings: ProjectSettings,
-  collections: Collection[]
+  collections: Collection[],
+  timeline: TimelineClip[]
 ): Blob {
-  const manifest = buildManifest(photos, settings, collections, 'reference');
+  const manifest = buildManifest(photos, settings, collections, timeline, 'reference');
   return new Blob([serializeManifest(manifest)], { type: 'application/json' });
 }
 
@@ -201,7 +274,8 @@ export async function importProject(file: File): Promise<LoadedProject> {
     )
   ).filter((p): p is PhotoPoint => p !== null);
 
-  return { photos, collections: pruneCollections(manifest.collections, photos) };
+  const collections = pruneCollections(manifest.collections, photos);
+  return { photos, collections, timeline: pruneTimeline(manifest.timeline, photos, collections) };
 }
 
 /** Parses a reference-only .json file into a manifest (no images yet). */
@@ -212,7 +286,7 @@ export async function parseReferenceJson(file: File): Promise<Manifest> {
 /**
  * Re-attaches a reference manifest to actual image files the user re-selected,
  * matching by relative path first, then by file name. Unmatched entries are
- * dropped (and their ids pruned from collections).
+ * dropped (and their ids pruned from collections + the timeline).
  */
 export function applyReference(manifest: Manifest, files: File[]): LoadedProject {
   const byPath = new Map<string, File>();
@@ -232,5 +306,6 @@ export function applyReference(manifest: Manifest, files: File[]): LoadedProject
     photos.push(entryToPhoto(entry, URL.createObjectURL(file)));
   }
 
-  return { photos, collections: pruneCollections(manifest.collections, photos) };
+  const collections = pruneCollections(manifest.collections, photos);
+  return { photos, collections, timeline: pruneTimeline(manifest.timeline, photos, collections) };
 }

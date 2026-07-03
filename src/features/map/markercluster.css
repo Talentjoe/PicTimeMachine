@@ -18,6 +18,17 @@
     width: 200px;
 }
 
+.photo-popup img {
+    width: 100%;
+    display: block;
+    border-radius: 8px;
+    margin-top: 2px;
+}
+
+.leaflet-popup-content-wrapper {
+    border-radius: 10px;
+}
+
 .photo-popup__date {
     color: #666;
     font-size: 12px;

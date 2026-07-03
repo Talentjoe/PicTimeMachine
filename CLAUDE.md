@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-A pure client-side React + TypeScript app (Create React App) that reads EXIF GPS + timestamp data from user-selected images and replays the user's trajectory on a Leaflet map over a timeline. Nothing is uploaded — images are read in-browser via `URL.createObjectURL` and `EXIF.readFromBinaryFile`. The UI is in Chinese and uses MUI (Material UI). Demo: app.talentjoe.fun. See `README.md` for the author's blog write-up.
+A pure client-side React + TypeScript app (Create React App) that reads EXIF GPS + timestamp data from user-selected images and replays the user's trajectory on a Leaflet map. The UI is a **video-editor (NLE)**: a media bin of imported photos, a center map, and a bottom **timeline of clips** the user builds. Nothing is uploaded — images are read in-browser via `URL.createObjectURL` and `EXIF.readFromBinaryFile`. The UI is in Chinese and uses MUI (Material UI). Demo: app.talentjoe.fun. See `README.md` for the author's blog write-up.
 
 ## Commands
 
@@ -21,34 +21,34 @@ A pure client-side React + TypeScript app (Create React App) that reads EXIF GPS
 Everything is TypeScript (`.ts`/`.tsx`). Source is organized by feature under `src/`:
 
 - `App.tsx` — wraps the app in MUI `<ThemeProvider>`/`<CssBaseline>` (theme in `theme.ts`), shows a one-time welcome `<Dialog>` (gated by a `viewed` cookie via `react-cookies`), and renders `PhotoTrackPage`.
-- `types/photo.ts` — the shared data model `PhotoPoint` (`id`, `path`, `description`, `duration`, optional `zoom`, nullable `lat/lng/date`), `LocatedPhoto`, the `isLocated` guard, `newId`/`newPhotoId`, `DEFAULT_ZOOM`. **The position of a photo in the `images` array IS its display order** (drag-reorder / sort-by-time just reorder the array). `types/collection.ts` — `Collection` (many-to-many `photoIds`, `comment`, `color`) + palette helpers. `types/*.d.ts` declare untyped modules (`exif-js`, `react-cookies`); `react-app-env.d.ts` brings in CRA's asset-module types.
-- `lib/` — React-free pure logic. `exif.ts#readPhotosFromFiles` parses files into de-duplicated, date-sorted `PhotoPoint[]`. `geo.ts#wgs84ToGcj02` converts coordinates (see gotchas). `hull.ts#convexHull` for collection regions. `project.ts` reads/writes project files (JSZip).
-- `features/photo-track/` — `PhotoTrackPage.tsx` (central state container + MUI layout), `PhotoList.tsx` (drag-to-reorder list via `@dnd-kit`, with selection checkbox, per-photo duration/zoom, delete, collection chips), `CollectionsPanel.tsx` (create/edit/delete collections + comment).
-- `features/map/` — all Leaflet rendering; only `MapView` is exported. `tileSources.ts` holds the three basemaps + `selectTileSource`; `CollectionsLayer.tsx` draws collection hull polygons.
-- `features/timeline/Timeline.tsx` — the animated scrubber.
+- `types/photo.ts` — the shared data model `PhotoPoint` (`id`, `path`, `description`, `duration` *(default-only)*, optional `zoom`, nullable `lat/lng/date`), `LocatedPhoto`, the `isLocated` guard, `newId`/`newPhotoId`, `DEFAULT_ZOOM`. `images` is now the **media bin** — its order is bin order, independent of the timeline. `types/timeline.ts` — the **`TimelineClip`** model (`kind: 'photo'|'collection'|'gap'`, `refId`, `moveDuration`, `holdDuration`, `zoom?`) + pure helpers `deriveSchedule`/`clipIndexAt`/`clipLength`/`photoClip`/`collectionClip`/`gapClip`. `types/collection.ts` — `Collection` (many-to-many `photoIds`, `comment`, `color`) + palette helpers. `types/*.d.ts` declare untyped modules; `react-app-env.d.ts` brings in CRA's asset-module types.
+- `lib/` — React-free pure logic. `exif.ts#readPhotosFromFiles` parses files into de-duplicated, date-sorted `PhotoPoint[]`. `geo.ts#wgs84ToGcj02` converts coordinates (see gotchas). `hull.ts#convexHull` for collection regions. `tilePrefetch.ts#prefetchTiles` warms tiles for the next clip. `project.ts` reads/writes project files (JSZip).
+- `features/photo-track/` — `PhotoTrackPage.tsx` (central state container + full-screen layout), `MediaBin.tsx` (imported-photo sidebar: import, select, add-to-timeline, delete, collection chips), `ClipInspector.tsx` (edit the selected clip's move/hold/zoom), `CollectionsPanel.tsx` (create/edit/delete collections + comment + add-to-timeline).
+- `features/map/` — all Leaflet rendering; exports `MapView`, `PhotoOverlay`, and the `ViewTarget` type. `tileSources.ts` holds the three basemaps + `selectTileSource`; `CollectionsLayer.tsx` draws collection hull polygons; `PhotoOverlay.tsx` is the themed photo card during playback.
+- `features/timeline/Timeline.tsx` — the clip-track scrubber (rAF playback + dnd-kit reorder).
 
 Each `features/*` and `lib/` directory has a `README.md` describing its responsibility and data flow — read those when working in a module.
 
-**The timeline is continuous wall-clock seconds with per-photo durations.** This is the key concept:
-- Each `PhotoPoint` has a `duration` (seconds, default 1 — "一秒一张"), editable in `PhotoList` and saved in the project file.
-- `PhotoTrackPage` derives, over the **located** photos, `boundaries` (each photo's cumulative start offset) and `total` (sum of durations), and passes them to `Timeline`.
-- `Timeline.tsx` smoothly advances `currentTime` (float seconds) via `requestAnimationFrame` × `rate`, resolves the current photo from `boundaries`, and fires `onIndexChange(index)` **only when the index changes** (not per frame — otherwise the map rebuilds layers every frame). It also fires `onUserInteract()` on play/scrub. `TimelineHandle.pause()` lets the parent stop playback.
-**The map has three explicit modes** (`mode` state in `PhotoTrackPage`, default `overview`), not implicit timeline endpoints:
-- `overview` → all located markers + FitBounds, no highlight.
-- `playback` → `located[0..currentIndex]`, highlight current, FocusOnMarkers (at the current photo's `zoom`).
-- `collections` → photos of the visible collection(s) + their convex-hull polygons + FitBounds.
-The 总览/组合 buttons switch mode + pause; `onUserInteract` switches to `playback`.
+**The timeline is an ordered list of clips, each with a move + hold phase.** This is the key concept:
+- A `TimelineClip` is a **photo**, a **collection**, or an empty **gap** (`types/timeline.ts`). A photo may appear zero, one, or many times; gaps repeat freely. The bin order does NOT define the timeline.
+- Each clip's length = `moveDuration` (the Leaflet `flyTo` animation time) + `holdDuration` (dwell). `PhotoTrackPage` derives `boundaries` + `total` via `deriveSchedule(timeline)` and passes them to `Timeline`.
+- `Timeline.tsx` smoothly advances `currentTime` (float seconds) via `requestAnimationFrame` × `rate`, resolves the active clip via `clipIndexAt`, and fires `onClipChange(index)` **only when the index changes** (not per frame). Time advance never waits on the map animation — playback is non-blocking. It also fires `onUserInteract()` (→ preview) and `onPlayStateChange(playing)` (→ map `animate`). `TimelineHandle.pause()` lets the parent stop playback.
+**The map is driven by a `ViewTarget`** (`resolveTarget` in `PhotoTrackPage`), not implicit endpoints. `preview` state: `false` → overview (FitBounds all located), `true` → follow the current clip:
+- photo clip → `FocusOnMarkers` flies to it over `moveDuration` at `clip.zoom ?? photo.zoom ?? DEFAULT_ZOOM`.
+- collection clip → `FitBounds` over members + `CollectionsLayer` hull.
+- gap clip → carry the previous non-gap view forward (no new fly).
+The 总览 button sets `preview=false` + pause; `onUserInteract` sets `preview=true`. The next clip's coords are passed as `prefetch` to warm tiles.
 
 Map-effect components (each calls `useMap()`, renders `null`, does imperative Leaflet work in `useEffect`), composed by `MapView`:
-- `MarkerClusterLayer.tsx` — `L.markerClusterGroup`; popups are built as **DOM elements** (`buildPopup`) with an editable description `textarea` + save button wired through `onDescriptionChange(id, text)`. When `highlight`, the most recent image gets a larger red icon + auto-opened popup.
-- `FocusOnMarkers.tsx` — during playback, pans/zooms to the current point at its `zoom ?? DEFAULT_ZOOM` (single) or fits bounds (multiple).
-- `FitBounds.tsx` — fits the map to all visible markers (overview/collections).
+- `MarkerClusterLayer.tsx` — `L.markerClusterGroup`; popups are built as **DOM elements** (`buildPopup`) with an editable description `textarea` + save button wired through `onDescriptionChange(id, text)`. The photo named by `highlightId` gets a larger red icon (popup auto-open gated by `openHighlightPopup`, off during playback — `PhotoOverlay` shows instead).
+- `FocusOnMarkers.tsx` — `flyTo(point, zoom, {duration: moveDuration})` when `animate`, else instant `setView` (snappy/interruptible scrubbing).
+- `FitBounds.tsx` — fits the map to given positions (optional animation `duration`).
 - `CollectionsLayer.tsx` — draws each collection's convex-hull polygon (skipped when < 3 located members) with a name/comment popup.
 
-**Project file** (`lib/project.ts`, manifest **v2**): two save modes sharing one manifest schema (paths, descriptions, order, durations, zoom, coords, ISO dates, **collections**, and each photo's persisted `id`).
+**Project file** (`lib/project.ts`, manifest **v3**): two save modes sharing one schema (photos, descriptions, durations, zoom, coords, ISO dates, **collections**, the **`timeline`** of clips, and each photo's persisted `id`). **v1/v2 are no longer supported** (rejected on load).
 - **Full** = self-contained `.zip` (`exportProject` with `compress` DEFLATE/STORE toggle) + `importProject` — round-trips with no folder re-pick.
 - **Reference** = metadata-only `.json` (`exportReference`) + `parseReferenceJson` then `applyReference(manifest, files)` — the user re-selects the original files and entries match by `path` then `name`.
-- Photo `id`s are persisted and reused on import so `collection.photoIds` stay linked. Keep manifest (de)serialization (`buildManifest`/`parseManifest`, with v1 back-compat) pure and separate from zip/blob I/O so it stays unit-testable (`project.test.ts`, `hull.test.ts`).
+- Photo/collection `id`s are persisted so clips' `refId` and `collection.photoIds` stay linked; `importProject`/`applyReference` prune clips whose target is missing. If a manifest has no `timeline`, `parseManifest` generates one photo clip per located photo. Keep manifest (de)serialization (`buildManifest`/`parseManifest`) pure and separate from zip/blob I/O so it stays unit-testable (`project.test.ts`, `timeline.test.ts`, `hull.test.ts`).
 
 ## Conventions & gotchas
 

@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  Container,
   Paper,
   Stack,
   Button,
@@ -13,19 +12,20 @@ import {
   Switch,
   FormControlLabel,
 } from '@mui/material';
-import UploadFileIcon from '@mui/icons-material/UploadFile';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import SaveAltIcon from '@mui/icons-material/SaveAlt';
 import SortIcon from '@mui/icons-material/Sort';
 import PublicIcon from '@mui/icons-material/Public';
-import LayersIcon from '@mui/icons-material/Layers';
 import LinkIcon from '@mui/icons-material/Link';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
-import MapView from '../map/MapView';
+import AddBoxOutlinedIcon from '@mui/icons-material/AddBoxOutlined';
+import MapView, { type ViewTarget } from '../map/MapView';
+import PhotoOverlay from '../map/PhotoOverlay';
 import type { ChinaProvider } from '../map/tileSources';
-import Timeline, { type TimelineHandle } from '../timeline/Timeline';
-import PhotoList from './PhotoList';
+import Timeline, { type TimelineHandle, type ClipInfo } from '../timeline/Timeline';
+import MediaBin from './MediaBin';
+import ClipInspector from './ClipInspector';
 import CollectionsPanel from './CollectionsPanel';
 import { readPhotosFromFiles, DEFAULT_DURATION } from '../../lib/exif';
 import {
@@ -37,14 +37,19 @@ import {
   type ProjectSettings,
   type Manifest,
 } from '../../lib/project';
-import { isLocated, type PhotoPoint } from '../../types/photo';
+import { isLocated, DEFAULT_ZOOM, type PhotoPoint } from '../../types/photo';
 import {
   newCollectionId,
   nextCollectionColor,
   type Collection,
 } from '../../types/collection';
-
-type Mode = 'overview' | 'playback' | 'collections';
+import {
+  deriveSchedule,
+  photoClip,
+  collectionClip,
+  gapClip,
+  type TimelineClip,
+} from '../../types/timeline';
 
 /** Triggers a browser download for a Blob. */
 function downloadBlob(blob: Blob, filename: string) {
@@ -59,11 +64,13 @@ function downloadBlob(blob: Blob, filename: string) {
 function PhotoTrackPage() {
   const [images, setImages] = useState<PhotoPoint[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
+  const [timeline, setTimeline] = useState<TimelineClip[]>([]);
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [mode, setMode] = useState<Mode>('overview');
+  const [playing, setPlaying] = useState(false);
+  /** false = overview framing; true = follow the current clip. */
+  const [preview, setPreview] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
-  const [advanced, setAdvanced] = useState(false);
   const [isChina, setIsChina] = useState(false);
   const [provider, setProvider] = useState<ChinaProvider>('amap');
   const [compress, setCompress] = useState(true);
@@ -73,45 +80,101 @@ function PhotoTrackPage() {
   const pendingReference = useRef<Manifest | null>(null);
 
   const located = useMemo(() => images.filter(isLocated), [images]);
+  const photoById = useMemo(() => new Map(images.map((p) => [p.id, p])), [images]);
+  const collectionById = useMemo(() => new Map(collections.map((c) => [c.id, c])), [collections]);
 
-  // Per-photo start offsets (seconds) and total length, over the located set.
-  const { boundaries, total } = useMemo(() => {
-    const b: number[] = [];
-    let acc = 0;
-    for (const p of located) {
-      b.push(acc);
-      acc += p.duration;
-    }
-    return { boundaries: b, total: acc };
-  }, [located]);
+  const { boundaries, total } = useMemo(() => deriveSchedule(timeline), [timeline]);
 
-  const clampedIndex = located.length
-    ? Math.max(0, Math.min(currentIndex, located.length - 1))
+  const clampedIndex = timeline.length
+    ? Math.max(0, Math.min(currentIndex, timeline.length - 1))
     : 0;
-
-  // Which collections drive the map in collections mode (one focused, or all).
-  const mapCollections = useMemo(
-    () => (selectedCollectionId ? collections.filter((c) => c.id === selectedCollectionId) : collections),
-    [collections, selectedCollectionId]
+  const currentClip = timeline.length ? timeline[clampedIndex] : null;
+  const selectedClip = useMemo(
+    () => timeline.find((c) => c.id === selectedClipId) ?? null,
+    [timeline, selectedClipId]
   );
 
-  const visibleImages = useMemo(() => {
-    if (mode === 'playback') {
-      return located.length === 0 ? [] : located.slice(0, clampedIndex + 1);
-    }
-    if (mode === 'collections') {
-      const set = new Set<string>();
-      mapCollections.forEach((c) => c.photoIds.forEach((id) => set.add(id)));
-      if (set.size === 0) return located; // nothing grouped yet → show all
-      return located.filter((p) => set.has(p.id));
-    }
-    return located; // overview
-  }, [mode, located, clampedIndex, mapCollections]);
-
-  const focusImages = useMemo(
-    () => (mode === 'playback' && located.length ? located.slice(clampedIndex, clampedIndex + 1) : []),
-    [mode, located, clampedIndex]
+  // Per-clip presentation for the timeline track.
+  const clipInfos = useMemo<ClipInfo[]>(
+    () =>
+      timeline.map((clip) => {
+        if (clip.kind === 'photo') {
+          const p = clip.refId ? photoById.get(clip.refId) : undefined;
+          return { kind: 'photo', label: p ? p.name : '(已删除)', color: '#2e7d6b', thumbUrl: p?.url };
+        }
+        if (clip.kind === 'collection') {
+          const c = clip.refId ? collectionById.get(clip.refId) : undefined;
+          return { kind: 'collection', label: c ? c.name : '(已删除)', color: c ? c.color : '#888' };
+        }
+        return { kind: 'gap', label: '空白', color: '#dfe3e8' };
+      }),
+    [timeline, photoById, collectionById]
   );
+
+  // Resolve the map framing target from the current clip (gaps carry the
+  // previous non-gap view forward; animate only on the active clip while playing).
+  const resolveTarget = useCallback(
+    (index: number): ViewTarget => {
+      for (let i = index; i >= 0; i--) {
+        const clip = timeline[i];
+        if (!clip || clip.kind === 'gap') continue;
+        if (clip.kind === 'photo') {
+          const p = clip.refId ? photoById.get(clip.refId) : undefined;
+          if (p && isLocated(p)) {
+            return {
+              kind: 'photo',
+              photoId: p.id,
+              zoom: clip.zoom ?? p.zoom ?? DEFAULT_ZOOM,
+              moveDuration: clip.moveDuration,
+              animate: playing && i === index,
+            };
+          }
+          continue;
+        }
+        if (clip.kind === 'collection') {
+          const c = clip.refId ? collectionById.get(clip.refId) : undefined;
+          if (c) {
+            return {
+              kind: 'collection',
+              collectionId: c.id,
+              moveDuration: clip.moveDuration,
+              animate: playing && i === index,
+            };
+          }
+        }
+      }
+      return { kind: 'overview' };
+    },
+    [timeline, photoById, collectionById, playing]
+  );
+
+  const target: ViewTarget =
+    preview && timeline.length ? resolveTarget(clampedIndex) : { kind: 'overview' };
+
+  // The photo to showcase in the overlay (only on a photo clip while previewing).
+  const overlayPhoto =
+    preview && currentClip && currentClip.kind === 'photo' && currentClip.refId
+      ? photoById.get(currentClip.refId) ?? null
+      : null;
+
+  // WGS-84 target of the next clip, to warm tiles ahead of arrival.
+  const prefetch = useMemo(() => {
+    if (!preview) return null;
+    const clip = timeline[clampedIndex + 1];
+    if (!clip) return null;
+    if (clip.kind === 'photo' && clip.refId) {
+      const p = photoById.get(clip.refId);
+      if (p && isLocated(p)) return { lat: p.lat, lng: p.lng, zoom: clip.zoom ?? p.zoom ?? DEFAULT_ZOOM };
+    }
+    if (clip.kind === 'collection' && clip.refId) {
+      const c = collectionById.get(clip.refId);
+      const first = c?.photoIds.map((id) => photoById.get(id)).find((p) => p && isLocated(p));
+      if (first && isLocated(first)) return { lat: first.lat, lng: first.lng, zoom: DEFAULT_ZOOM };
+    }
+    return null;
+  }, [preview, timeline, clampedIndex, photoById, collectionById]);
+
+  const selectedClipLabel = selectedClip ? clipInfos[timeline.indexOf(selectedClip)]?.label ?? '' : '';
 
   // ---- photo import / project I/O ----
 
@@ -119,18 +182,24 @@ function PhotoTrackPage() {
     const files = Array.from(e.target.files ?? []);
     const merged = await readPhotosFromFiles(files, images);
     setImages(merged);
-    setSnackbar(`总共有 ${merged.filter(isLocated).length} 张有效图片`);
+    setSnackbar(`素材库共有 ${merged.filter(isLocated).length} 张有效图片`);
     e.target.value = '';
   };
 
-  const replaceProject = (photos: PhotoPoint[], cols: Collection[], msg: string) => {
+  const replaceProject = (
+    photos: PhotoPoint[],
+    cols: Collection[],
+    clips: TimelineClip[],
+    msg: string
+  ) => {
     images.forEach((img) => URL.revokeObjectURL(img.url));
     setImages(photos);
     setCollections(cols);
+    setTimeline(clips);
     setSelectedIds(new Set());
-    setSelectedCollectionId(null);
+    setSelectedClipId(null);
     setCurrentIndex(0);
-    setMode('overview');
+    setPreview(false);
     setSnackbar(msg);
   };
 
@@ -139,8 +208,8 @@ function PhotoTrackPage() {
     e.target.value = '';
     if (!file) return;
     try {
-      const { photos, collections: cols } = await importProject(file);
-      replaceProject(photos, cols, `已载入项目：${photos.length} 张图片`);
+      const { photos, collections: cols, timeline: clips } = await importProject(file);
+      replaceProject(photos, cols, clips, `已载入项目：${photos.length} 张图片，${clips.length} 个片段`);
     } catch (err) {
       console.error(err);
       setSnackbar(err instanceof Error ? err.message : '项目文件载入失败');
@@ -167,9 +236,9 @@ function PhotoTrackPage() {
     const manifest = pendingReference.current;
     pendingReference.current = null;
     if (!manifest) return;
-    const { photos, collections: cols } = applyReference(manifest, files);
-    const total = manifest.photos.length;
-    replaceProject(photos, cols, `已按引用恢复 ${photos.length}/${total} 张图片`);
+    const { photos, collections: cols, timeline: clips } = applyReference(manifest, files);
+    const totalPhotos = manifest.photos.length;
+    replaceProject(photos, cols, clips, `已按引用恢复 ${photos.length}/${totalPhotos} 张图片`);
   };
 
   const settingsOf = (): ProjectSettings => ({
@@ -182,7 +251,7 @@ function PhotoTrackPage() {
     if (images.length === 0) return setSnackbar('没有可导出的图片');
     setSnackbar('正在打包…');
     try {
-      const blob = await exportProject(images, settingsOf(), collections, { compress });
+      const blob = await exportProject(images, settingsOf(), collections, timeline, { compress });
       downloadBlob(blob, `pic-time-machine-${Date.now()}.zip`);
       setSnackbar('完整项目已导出');
     } catch (err) {
@@ -193,21 +262,22 @@ function PhotoTrackPage() {
 
   const handleExportReference = () => {
     if (images.length === 0) return setSnackbar('没有可导出的图片');
-    const blob = exportReference(images, settingsOf(), collections);
+    const blob = exportReference(images, settingsOf(), collections, timeline);
     downloadBlob(blob, `pic-time-machine-ref-${Date.now()}.json`);
     setSnackbar('引用文件已导出（不含图片）');
   };
 
-  // ---- photo edits ----
+  // ---- photo (bin) edits ----
 
   const handleDeleteAll = () => {
     images.forEach((img) => URL.revokeObjectURL(img.url));
     setImages([]);
     setCollections([]);
+    setTimeline([]);
     setSelectedIds(new Set());
-    setSelectedCollectionId(null);
+    setSelectedClipId(null);
     setCurrentIndex(0);
-    setMode('overview');
+    setPreview(false);
   };
 
   const handleDeleteOne = (id: string) => {
@@ -217,15 +287,9 @@ function PhotoTrackPage() {
       return prev.filter((p) => p.id !== id);
     });
     setCollections((prev) => prev.map((c) => ({ ...c, photoIds: c.photoIds.filter((p) => p !== id) })));
+    // Drop any timeline clips that referenced this photo.
+    setTimeline((prev) => prev.filter((c) => !(c.kind === 'photo' && c.refId === id)));
   };
-
-  const handleReorder = (next: PhotoPoint[]) => setImages(next);
-
-  const handleDurationChange = (id: string, seconds: number) =>
-    setImages((prev) => prev.map((p) => (p.id === id ? { ...p, duration: seconds } : p)));
-
-  const handleZoomChange = (id: string, zoom: number) =>
-    setImages((prev) => prev.map((p) => (p.id === id ? { ...p, zoom } : p)));
 
   const handleDescriptionChange = useCallback((id: string, description: string) => {
     setImages((prev) => prev.map((p) => (p.id === id ? { ...p, description } : p)));
@@ -234,18 +298,59 @@ function PhotoTrackPage() {
   const handleSortByTime = () =>
     setImages((prev) =>
       [...prev].sort((a, b) => {
-        const ta = a.date ? a.date.getTime() : Infinity; // undated photos sink to the end
+        const ta = a.date ? a.date.getTime() : Infinity;
         const tb = b.date ? b.date.getTime() : Infinity;
         return ta - tb;
       })
     );
+
+  // ---- timeline edits ----
+
+  const addPhotoToTimeline = (id: string) => {
+    const p = photoById.get(id);
+    if (!p || !isLocated(p)) return;
+    const clip = photoClip(id, p.zoom ?? DEFAULT_ZOOM);
+    setTimeline((prev) => [...prev, clip]);
+    setSelectedClipId(clip.id);
+    setSnackbar(`已加入时间线：${p.name}`);
+  };
+
+  const addCollectionToTimeline = (id: string) => {
+    const c = collectionById.get(id);
+    if (!c) return;
+    const clip = collectionClip(id);
+    setTimeline((prev) => [...prev, clip]);
+    setSelectedClipId(clip.id);
+    setSnackbar(`已加入组合片段：${c.name}`);
+  };
+
+  const addGapToTimeline = () => {
+    const clip = gapClip();
+    setTimeline((prev) => [...prev, clip]);
+    setSelectedClipId(clip.id);
+  };
+
+  const handleReorderClips = (next: TimelineClip[]) => setTimeline(next);
+
+  const deleteClip = (id: string) => {
+    setTimeline((prev) => prev.filter((c) => c.id !== id));
+    setSelectedClipId((cur) => (cur === id ? null : cur));
+  };
+
+  const setClipMove = (id: string, seconds: number) =>
+    setTimeline((prev) => prev.map((c) => (c.id === id ? { ...c, moveDuration: seconds } : c)));
+  const setClipHold = (id: string, seconds: number) =>
+    setTimeline((prev) => prev.map((c) => (c.id === id ? { ...c, holdDuration: seconds } : c)));
+  const setClipZoom = (id: string, zoom: number) =>
+    setTimeline((prev) => prev.map((c) => (c.id === id ? { ...c, zoom } : c)));
 
   // ---- collections ----
 
   const toggleSelect = (id: string) =>
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
 
@@ -260,14 +365,12 @@ function PhotoTrackPage() {
     };
     setCollections((prev) => [...prev, collection]);
     setSelectedIds(new Set());
-    setMode('collections');
-    setSelectedCollectionId(null);
     setSnackbar(`已创建组合（${collection.photoIds.length} 张）`);
   };
 
   const deleteCollection = (id: string) => {
     setCollections((prev) => prev.filter((c) => c.id !== id));
-    setSelectedCollectionId((cur) => (cur === id ? null : cur));
+    setTimeline((prev) => prev.filter((c) => !(c.kind === 'collection' && c.refId === id)));
   };
 
   const renameCollection = (id: string, name: string) =>
@@ -288,59 +391,24 @@ function PhotoTrackPage() {
       prev.map((c) => (c.id === id ? { ...c, photoIds: c.photoIds.filter((p) => !selectedIds.has(p)) } : c))
     );
 
-  const focusCollection = (id: string) => {
-    setSelectedCollectionId(id);
-    setMode('collections');
-    timelineRef.current?.pause();
-  };
-
-  // ---- mode switching ----
+  // ---- playback / framing ----
 
   const enterOverview = () => {
-    setMode('overview');
-    setSelectedCollectionId(null);
+    setPreview(false);
     timelineRef.current?.pause();
   };
 
-  const enterCollections = () => {
-    setMode('collections');
-    setSelectedCollectionId(null);
-    timelineRef.current?.pause();
-  };
-
-  const exitToPlayback = useCallback(() => setMode('playback'), []);
+  const enterPreview = useCallback(() => setPreview(true), []);
 
   return (
-    <Container maxWidth="lg" sx={{ py: 3 }}>
-      <Typography variant="h5" gutterBottom>
-        图片时光机
-      </Typography>
+    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'background.default' }}>
+      {/* Top toolbar */}
+      <Paper square elevation={0} sx={{ px: 2, py: 1, borderBottom: '1px solid', borderColor: 'divider' }}>
+        <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
+          <Typography variant="h6" sx={{ mr: 1 }}>
+            图片时光机
+          </Typography>
 
-      <Paper variant="outlined" sx={{ overflow: 'hidden', mb: 2 }}>
-        <Box sx={{ height: '70vh' }}>
-          <MapView
-            images={visibleImages}
-            focusImages={focusImages}
-            highlight={mode === 'playback'}
-            showAll={mode !== 'playback'}
-            isChina={isChina}
-            provider={provider}
-            onDescriptionChange={handleDescriptionChange}
-            collections={mapCollections}
-            showCollections={mode === 'collections'}
-            onSelectCollection={focusCollection}
-          />
-        </Box>
-      </Paper>
-
-      <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-        <Stack
-          direction={{ xs: 'column', sm: 'row' }}
-          spacing={2}
-          alignItems={{ xs: 'stretch', sm: 'center' }}
-          flexWrap="wrap"
-          useFlexGap
-        >
           <ToggleButtonGroup
             exclusive
             size="small"
@@ -366,36 +434,24 @@ function PhotoTrackPage() {
           )}
 
           <Button
-            variant={mode === 'overview' ? 'contained' : 'outlined'}
+            variant={preview ? 'outlined' : 'contained'}
+            size="small"
             startIcon={<PublicIcon />}
             onClick={enterOverview}
           >
             总览
           </Button>
 
-          <Button
-            variant={mode === 'collections' ? 'contained' : 'outlined'}
-            startIcon={<LayersIcon />}
-            onClick={enterCollections}
-          >
-            组合
-          </Button>
+          <Box sx={{ flex: 1 }} />
 
-          <Button variant="contained" component="label" startIcon={<UploadFileIcon />}>
-            选择图片
-            <input type="file" hidden multiple accept="image/*" onChange={handleFolderSelect} />
-          </Button>
-
-          <Button variant="outlined" component="label" startIcon={<FolderOpenIcon />}>
+          <Button variant="outlined" size="small" component="label" startIcon={<FolderOpenIcon />}>
             打开项目
             <input type="file" hidden accept=".zip" onChange={handleImportZip} />
           </Button>
-
-          <Button variant="outlined" component="label" startIcon={<LinkIcon />}>
+          <Button variant="outlined" size="small" component="label" startIcon={<LinkIcon />}>
             打开引用
             <input type="file" hidden accept=".json" onChange={handleReferenceJson} />
           </Button>
-          {/* second step of reference import: re-select the original images */}
           <input
             type="file"
             hidden
@@ -404,86 +460,135 @@ function PhotoTrackPage() {
             ref={refImagesInputRef}
             onChange={handleReferenceImages}
           />
-
-          <Button variant="outlined" startIcon={<SaveAltIcon />} onClick={handleExportFull}>
+          <Button variant="outlined" size="small" startIcon={<SaveAltIcon />} onClick={handleExportFull}>
             导出(.zip)
           </Button>
-
-          <Button variant="outlined" startIcon={<DescriptionOutlinedIcon />} onClick={handleExportReference}>
-            导出引用(.json)
-          </Button>
-
-          <FormControlLabel
-            control={<Switch checked={compress} onChange={(e) => setCompress(e.target.checked)} />}
-            label="压缩"
-          />
-
-          <Button variant="outlined" startIcon={<SortIcon />} onClick={handleSortByTime}>
-            按时间排序
-          </Button>
-
-          <FormControlLabel
-            control={<Switch checked={advanced} onChange={(e) => setAdvanced(e.target.checked)} />}
-            label="高级选项"
-          />
-
           <Button
             variant="outlined"
+            size="small"
+            startIcon={<DescriptionOutlinedIcon />}
+            onClick={handleExportReference}
+          >
+            导出引用(.json)
+          </Button>
+          <FormControlLabel
+            control={<Switch size="small" checked={compress} onChange={(e) => setCompress(e.target.checked)} />}
+            label="压缩"
+          />
+          <Button variant="outlined" size="small" startIcon={<SortIcon />} onClick={handleSortByTime}>
+            按时间排序
+          </Button>
+          <Button
+            variant="outlined"
+            size="small"
             color="secondary"
             startIcon={<DeleteOutlineIcon />}
             onClick={handleDeleteAll}
           >
-            删除全部
+            清空
           </Button>
-
-          <Chip label={`共 ${images.length} 张 · 地图 ${located.length} 张`} variant="outlined" />
+          <Chip label={`素材 ${images.length} · 片段 ${timeline.length}`} size="small" variant="outlined" />
         </Stack>
       </Paper>
 
-      <Box sx={{ mb: 2 }}>
+      {/* Middle: media bin + map */}
+      <Box sx={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        <Box
+          sx={{
+            width: 320,
+            flexShrink: 0,
+            p: 1.5,
+            borderRight: '1px solid',
+            borderColor: 'divider',
+            bgcolor: 'background.paper',
+          }}
+        >
+          <MediaBin
+            photos={images}
+            collections={collections}
+            selectedIds={selectedIds}
+            onImport={handleFolderSelect}
+            onAddToTimeline={addPhotoToTimeline}
+            onDeleteOne={handleDeleteOne}
+            onToggleSelect={toggleSelect}
+          />
+        </Box>
+
+        <Box sx={{ flex: 1, position: 'relative', minWidth: 0 }}>
+          <MapView
+            images={located}
+            target={target}
+            isChina={isChina}
+            provider={provider}
+            onDescriptionChange={handleDescriptionChange}
+            collections={collections}
+            prefetch={prefetch}
+          />
+          <PhotoOverlay photo={overlayPhoto} />
+        </Box>
+      </Box>
+
+      {/* Timeline track */}
+      <Box sx={{ px: 2, pt: 1 }}>
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+          <Typography variant="subtitle2" sx={{ flex: 1 }}>
+            时间线（拖动片段排序，点选片段可调时长）
+          </Typography>
+          <Button size="small" startIcon={<AddBoxOutlinedIcon />} onClick={addGapToTimeline}>
+            添加空白片段
+          </Button>
+        </Stack>
         <Timeline
           ref={timelineRef}
-          totalDuration={total}
+          clips={timeline}
+          infos={clipInfos}
           boundaries={boundaries}
-          onIndexChange={setCurrentIndex}
-          onUserInteract={exitToPlayback}
+          total={total}
+          selectedClipId={selectedClipId}
+          onClipChange={setCurrentIndex}
+          onSelectClip={setSelectedClipId}
+          onReorder={handleReorderClips}
+          onUserInteract={enterPreview}
+          onPlayStateChange={setPlaying}
         />
       </Box>
 
-      <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-        <Typography variant="h6" gutterBottom>
-          图片（拖动排序，勾选可成组，可调时长{advanced ? '/缩放' : ''}/删除）
-        </Typography>
-        <PhotoList
-          photos={images}
-          collections={collections}
-          selectedIds={selectedIds}
-          advanced={advanced}
-          onReorder={handleReorder}
-          onDeleteOne={handleDeleteOne}
-          onDurationChange={handleDurationChange}
-          onZoomChange={handleZoomChange}
-          onToggleSelect={toggleSelect}
-        />
-      </Paper>
-
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Typography variant="h6" gutterBottom>
-          图片组合
-        </Typography>
-        <CollectionsPanel
-          collections={collections}
-          selectedCount={selectedIds.size}
-          selectedCollectionId={selectedCollectionId}
-          onCreateFromSelection={createCollectionFromSelection}
-          onDeleteCollection={deleteCollection}
-          onRenameCollection={renameCollection}
-          onCommentChange={setCollectionComment}
-          onAddSelectedTo={addSelectedTo}
-          onRemoveSelectedFrom={removeSelectedFrom}
-          onFocusCollection={focusCollection}
-        />
-      </Paper>
+      {/* Bottom: clip inspector + collections */}
+      <Stack
+        direction={{ xs: 'column', md: 'row' }}
+        spacing={1.5}
+        sx={{ p: 2, pt: 1, maxHeight: '32vh', overflowY: 'auto' }}
+      >
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <ClipInspector
+            clip={selectedClip}
+            label={selectedClipLabel}
+            onMoveChange={setClipMove}
+            onHoldChange={setClipHold}
+            onZoomChange={setClipZoom}
+            onDelete={deleteClip}
+          />
+        </Box>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Paper variant="outlined" sx={{ p: 2 }}>
+            <Typography variant="subtitle1" gutterBottom>
+              图片组合
+            </Typography>
+            <CollectionsPanel
+              collections={collections}
+              selectedCount={selectedIds.size}
+              selectedCollectionId={null}
+              onCreateFromSelection={createCollectionFromSelection}
+              onDeleteCollection={deleteCollection}
+              onRenameCollection={renameCollection}
+              onCommentChange={setCollectionComment}
+              onAddSelectedTo={addSelectedTo}
+              onRemoveSelectedFrom={removeSelectedFrom}
+              onAddToTimeline={addCollectionToTimeline}
+            />
+          </Paper>
+        </Box>
+      </Stack>
 
       <Snackbar
         open={snackbar !== null}
@@ -492,7 +597,7 @@ function PhotoTrackPage() {
         message={snackbar ?? ''}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       />
-    </Container>
+    </Box>
   );
 }
 

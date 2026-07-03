@@ -10,7 +10,7 @@ import {
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrong';
+import AddToQueueIcon from '@mui/icons-material/AddToQueue';
 import PlaylistAddIcon from '@mui/icons-material/PlaylistAdd';
 import PlaylistRemoveIcon from '@mui/icons-material/PlaylistRemove';
 import type { Collection } from '../../types/collection';
@@ -26,7 +26,8 @@ interface CollectionsPanelProps {
   onCommentChange: (id: string, comment: string) => void;
   onAddSelectedTo: (id: string) => void;
   onRemoveSelectedFrom: (id: string) => void;
-  onFocusCollection: (id: string) => void;
+  /** Append a collection clip (fit-bounds + hull) to the timeline. */
+  onAddToTimeline: (id: string) => void;
 }
 
 const CollectionsPanel: React.FC<CollectionsPanelProps> = ({
@@ -39,7 +40,7 @@ const CollectionsPanel: React.FC<CollectionsPanelProps> = ({
   onCommentChange,
   onAddSelectedTo,
   onRemoveSelectedFrom,
-  onFocusCollection,
+  onAddToTimeline,
 }) => {
   return (
     <Stack spacing={2}>
@@ -85,9 +86,9 @@ const CollectionsPanel: React.FC<CollectionsPanelProps> = ({
               <Typography variant="caption" color="text.secondary">
                 {c.photoIds.length} 张
               </Typography>
-              <Tooltip title="在地图聚焦该组合">
-                <IconButton size="small" onClick={() => onFocusCollection(c.id)}>
-                  <CenterFocusStrongIcon fontSize="small" />
+              <Tooltip title="把该组合加入时间线">
+                <IconButton size="small" color="primary" onClick={() => onAddToTimeline(c.id)}>
+                  <AddToQueueIcon fontSize="small" />
                 </IconButton>
               </Tooltip>
               <Tooltip title="把勾选的图片加入该组合">

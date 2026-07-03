@@ -9,8 +9,10 @@ import type { LocatedPhoto } from '../../types/photo';
 interface ClusterProps {
   /** Photos to render; coordinates are expected to already match the basemap datum. */
   images: LocatedPhoto[];
-  /** When true, the last image is rendered as a larger red marker with its popup open. */
-  highlight?: boolean;
+  /** Id of the photo to render as a larger red marker (the active clip's photo). */
+  highlightId?: string | null;
+  /** When true, auto-open the highlighted marker's popup (off during playback — the overlay covers it). */
+  openHighlightPopup?: boolean;
   /** Called when the user edits a photo's description in its popup. */
   onDescriptionChange?: (id: string, description: string) => void;
 }
@@ -77,7 +79,8 @@ function buildPopup(
  */
 export const MarkerClusterLayer: React.FC<ClusterProps> = ({
   images,
-  highlight,
+  highlightId,
+  openHighlightPopup = true,
   onDescriptionChange,
 }) => {
   const map = useMap();
@@ -102,8 +105,8 @@ export const MarkerClusterLayer: React.FC<ClusterProps> = ({
       marker.bindPopup(() => buildPopup(img, onDescriptionChange, () => marker.closePopup()));
     };
 
-    const highlightImage = highlight ? images[images.length - 1] : null;
-    const normalImages = highlight ? images.slice(0, -1) : images;
+    const highlightImage = highlightId ? images.find((img) => img.id === highlightId) ?? null : null;
+    const normalImages = highlightImage ? images.filter((img) => img.id !== highlightImage.id) : images;
 
     normalImages.forEach((img) => {
       const marker = L.marker([img.lat, img.lng], { icon: defaultIcon });
@@ -121,14 +124,14 @@ export const MarkerClusterLayer: React.FC<ClusterProps> = ({
       });
       bindPopup(highlightMarker, highlightImage);
       highlightMarker.addTo(map);
-      highlightMarker.openPopup();
+      if (openHighlightPopup) highlightMarker.openPopup();
     }
 
     return () => {
       map.removeLayer(clusterGroup);
       if (highlightMarker) map.removeLayer(highlightMarker);
     };
-  }, [map, images, highlight, onDescriptionChange]);
+  }, [map, images, highlightId, openHighlightPopup, onDescriptionChange]);
 
   return null;
 };
