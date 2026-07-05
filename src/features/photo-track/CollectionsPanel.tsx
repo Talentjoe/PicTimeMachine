@@ -28,6 +28,8 @@ interface CollectionsPanelProps {
   onRemoveSelectedFrom: (id: string) => void;
   /** Append a collection clip (fit-bounds + hull) to the timeline. */
   onAddToTimeline: (id: string) => void;
+  /** Right-click on a collection card (context menu). */
+  onCollectionContextMenu?: (e: React.MouseEvent, collectionId: string) => void;
 }
 
 const CollectionsPanel: React.FC<CollectionsPanelProps> = ({
@@ -41,6 +43,7 @@ const CollectionsPanel: React.FC<CollectionsPanelProps> = ({
   onAddSelectedTo,
   onRemoveSelectedFrom,
   onAddToTimeline,
+  onCollectionContextMenu,
 }) => {
   return (
     <Stack spacing={2}>
@@ -68,6 +71,9 @@ const CollectionsPanel: React.FC<CollectionsPanelProps> = ({
           <Paper
             key={c.id}
             variant="outlined"
+            onContextMenu={
+              onCollectionContextMenu ? (e) => onCollectionContextMenu(e, c.id) : undefined
+            }
             sx={{
               p: 1.5,
               borderColor: selectedCollectionId === c.id ? c.color : 'divider',

@@ -5,6 +5,7 @@ import './icons'; // registers the default Leaflet marker icon (side effect)
 import { MarkerClusterLayer } from './MarkerClusterLayer';
 import FocusOnMarkers from './FocusOnMarkers';
 import FitBounds from './FitBounds';
+import InvalidateOnResize from './InvalidateOnResize';
 import CollectionsLayer, { type CollectionShape } from './CollectionsLayer';
 import { selectTileSource, type ChinaProvider } from './tileSources';
 import { wgs84ToGcj02 } from '../../lib/geo';
@@ -30,13 +31,14 @@ interface MapViewProps {
   target: ViewTarget;
   isChina: boolean;
   provider: ChinaProvider;
-  /** Called when the user edits a photo's description in its popup. */
-  onDescriptionChange?: (id: string, description: string) => void;
   /** All collections (used to resolve a collection target's hull). */
   collections?: Collection[];
   onSelectCollection?: (id: string) => void;
   /** Next clip's target (WGS-84) whose tiles to warm; null to skip prefetch. */
   prefetch?: { lat: number; lng: number; zoom: number } | null;
+  /** Marker offset from the viewport center for photo targets (px; keeps the
+   *  marker clear of the photo overlay). */
+  focusOffset?: [number, number];
 }
 
 /** Re-projects WGS-84 coords to GCJ-02 when the active basemap requires it. */
@@ -53,10 +55,10 @@ const MapView: React.FC<MapViewProps> = ({
   target,
   isChina,
   provider,
-  onDescriptionChange,
   collections,
   onSelectCollection,
   prefetch,
+  focusOffset,
 }) => {
   const source = selectTileSource(isChina, provider);
   const displayImages = useMemo(() => project(images, source.gcj02), [images, source.gcj02]);
@@ -106,6 +108,7 @@ const MapView: React.FC<MapViewProps> = ({
         point={p ? { lat: p.lat, lng: p.lng, zoom: target.zoom } : null}
         moveDuration={target.moveDuration}
         animate={target.animate}
+        offset={focusOffset}
       />
     );
   } else if (target.kind === 'collection') {
@@ -118,6 +121,7 @@ const MapView: React.FC<MapViewProps> = ({
 
   return (
     <MapContainer center={[0, 0]} zoom={3} style={{ height: '100%', width: '100%' }}>
+      <InvalidateOnResize />
       <TileLayer
         key={source.key}
         url={source.url}
@@ -129,7 +133,6 @@ const MapView: React.FC<MapViewProps> = ({
         images={displayImages}
         highlightId={highlightId}
         openHighlightPopup={false}
-        onDescriptionChange={onDescriptionChange}
       />
 
       {target.kind === 'collection' && (

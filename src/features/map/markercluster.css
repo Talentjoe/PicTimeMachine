@@ -46,28 +46,6 @@
     display: none;
 }
 
-.photo-popup__input {
-    width: 100%;
-    box-sizing: border-box;
-    margin-top: 6px;
-    resize: vertical;
-    font: inherit;
-}
-
-.photo-popup__save {
-    margin-top: 6px;
-    padding: 4px 12px;
-    border: none;
-    border-radius: 6px;
-    background-color: #2e7d6b;
-    color: #fff;
-    cursor: pointer;
-}
-
-.photo-popup__save:hover {
-    background-color: #276153;
-}
-
 .collection-popup {
     min-width: 160px;
 }

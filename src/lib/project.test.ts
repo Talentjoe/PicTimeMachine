@@ -70,6 +70,14 @@ describe('manifest round-trip', () => {
     expect(manifest.timeline).toEqual(timeline);
   });
 
+  it('preserves bin order (the photos array IS the bin order after drag-reorder)', () => {
+    const reordered = [photos[1], photos[0]];
+    const manifest = parseManifest(
+      serializeManifest(buildManifest(reordered, settings, collections, timeline, 'full'))
+    );
+    expect(manifest.photos.map((p) => p.id)).toEqual(['b', 'a']);
+  });
+
   it('records the reference mode flag', () => {
     const manifest = buildManifest(photos, settings, collections, timeline, 'reference');
     expect(manifest.mode).toBe('reference');

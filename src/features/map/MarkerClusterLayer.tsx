@@ -13,20 +13,14 @@ interface ClusterProps {
   highlightId?: string | null;
   /** When true, auto-open the highlighted marker's popup (off during playback — the overlay covers it). */
   openHighlightPopup?: boolean;
-  /** Called when the user edits a photo's description in its popup. */
-  onDescriptionChange?: (id: string, description: string) => void;
 }
 
 /**
- * Builds the popup as a DOM element (not an HTML string) so we can attach a
- * caption, an editable description textarea, and a save button wired back to
- * React via the onDescriptionChange callback.
+ * Builds the popup as a DOM element (not an HTML string): title, date, the
+ * photo, and its (read-only) description. Descriptions are edited in the clip
+ * inspector, not here.
  */
-function buildPopup(
-  img: LocatedPhoto,
-  onDescriptionChange: ((id: string, description: string) => void) | undefined,
-  closePopup: () => void
-): HTMLElement {
+function buildPopup(img: LocatedPhoto): HTMLElement {
   const container = document.createElement('div');
   container.className = 'photo-popup';
 
@@ -44,29 +38,11 @@ function buildPopup(
 
   container.append(title, dateEl, image);
 
-  // Read-only caption (the description "shown on the displayed image").
-  const caption = document.createElement('div');
-  caption.className = 'photo-popup__caption';
-  caption.textContent = img.description;
-  container.append(caption);
-
-  if (onDescriptionChange) {
-    const textarea = document.createElement('textarea');
-    textarea.className = 'photo-popup__input';
-    textarea.value = img.description;
-    textarea.rows = 2;
-    textarea.placeholder = '添加描述…';
-
-    const saveBtn = document.createElement('button');
-    saveBtn.className = 'photo-popup__save';
-    saveBtn.type = 'button';
-    saveBtn.textContent = '保存描述';
-    saveBtn.addEventListener('click', () => {
-      onDescriptionChange(img.id, textarea.value);
-      closePopup();
-    });
-
-    container.append(textarea, saveBtn);
+  if (img.description) {
+    const caption = document.createElement('div');
+    caption.className = 'photo-popup__caption';
+    caption.textContent = img.description;
+    container.append(caption);
   }
 
   return container;
@@ -81,7 +57,6 @@ export const MarkerClusterLayer: React.FC<ClusterProps> = ({
   images,
   highlightId,
   openHighlightPopup = true,
-  onDescriptionChange,
 }) => {
   const map = useMap();
 
@@ -101,8 +76,15 @@ export const MarkerClusterLayer: React.FC<ClusterProps> = ({
       },
     });
 
+    // autoPan keeps the clicked marker's popup fully on screen (the map pans
+    // if it would open at the edge); keepInView stays off so it doesn't fight
+    // flyTo during playback/scrubbing.
     const bindPopup = (marker: L.Marker, img: LocatedPhoto) => {
-      marker.bindPopup(() => buildPopup(img, onDescriptionChange, () => marker.closePopup()));
+      marker.bindPopup(() => buildPopup(img), {
+        autoPan: true,
+        autoPanPadding: L.point(48, 48),
+        keepInView: false,
+      });
     };
 
     const highlightImage = highlightId ? images.find((img) => img.id === highlightId) ?? null : null;
@@ -131,7 +113,7 @@ export const MarkerClusterLayer: React.FC<ClusterProps> = ({
       map.removeLayer(clusterGroup);
       if (highlightMarker) map.removeLayer(highlightMarker);
     };
-  }, [map, images, highlightId, openHighlightPopup, onDescriptionChange]);
+  }, [map, images, highlightId, openHighlightPopup]);
 
   return null;
 };
