@@ -40,13 +40,14 @@ interface TimelineProps {
   boundaries: number[];
   /** Total length of the timeline (seconds). */
   total: number;
-  selectedClipId: string | null;
+  /** Ids of all selected clips (multi-select: Ctrl/Cmd toggles, Shift ranges). */
+  selectedClipIds: ReadonlySet<string>;
   /** Fired when the active clip index changes (not every frame). */
   onClipChange?: (index: number) => void;
   /** Fired when the active clip's move/hold phase changes (not every frame). */
   onPhaseChange?: (phase: 'move' | 'hold') => void;
-  /** Fired when a clip block is clicked (opens the inspector). */
-  onSelectClip?: (id: string) => void;
+  /** Fired when a clip block is clicked (opens the inspector); the event carries modifier keys. */
+  onSelectClip?: (id: string, e: React.MouseEvent) => void;
   /** Fired when the user starts playback or scrubs. */
   onUserInteract?: () => void;
   /** Fired when playback starts/stops (drives the map's animate flag). */
@@ -78,7 +79,7 @@ interface SortableClipProps {
   info: ClipInfo;
   selected: boolean;
   showConnector: boolean;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, e: React.MouseEvent) => void;
   onContextMenu?: (e: React.MouseEvent, clipId: string) => void;
   /** Registers the card element used for playhead positioning. */
   registerNode: (id: string, el: HTMLElement | null) => void;
@@ -106,7 +107,7 @@ const SortableClip = memo<SortableClipProps>(
         )}
         <Box
           ref={(el: HTMLElement | null) => registerNode(clip.id, el)}
-          onClick={() => onSelect(clip.id)}
+          onClick={(e) => onSelect(clip.id, e)}
           onContextMenu={onContextMenu ? (e) => onContextMenu(e, clip.id) : undefined}
           sx={{
             width: CLIP_WIDTH,
@@ -194,7 +195,7 @@ const Timeline = forwardRef<TimelineHandle, TimelineProps>(
       infos,
       boundaries,
       total,
-      selectedClipId,
+      selectedClipIds,
       onClipChange,
       onPhaseChange,
       onSelectClip,
@@ -455,7 +456,7 @@ const Timeline = forwardRef<TimelineHandle, TimelineProps>(
                     key={clip.id}
                     clip={clip}
                     info={infos[i]}
-                    selected={clip.id === selectedClipId}
+                    selected={selectedClipIds.has(clip.id)}
                     showConnector={i > 0}
                     onSelect={onSelectClip ?? (() => {})}
                     onContextMenu={onClipContextMenu}

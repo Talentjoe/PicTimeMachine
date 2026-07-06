@@ -1,5 +1,11 @@
 import JSZip from 'jszip';
-import { newPhotoId, DEFAULT_ZOOM, type PhotoPoint } from '../types/photo';
+import {
+  newPhotoId,
+  DEFAULT_ZOOM,
+  isPhotoOverlaySetting,
+  type PhotoPoint,
+  type PhotoOverlaySetting,
+} from '../types/photo';
 import type { Collection } from '../types/collection';
 import {
   DEFAULT_MOVE,
@@ -27,6 +33,8 @@ export interface ManifestPhoto {
   /** Default seconds suggested for new clips of this photo. */
   duration: number;
   zoom: number;
+  /** Per-photo playback photo-card override; absent = follow the global mode. */
+  overlay?: PhotoOverlaySetting;
   lat: number | null;
   lng: number | null;
   /** ISO string, or null when the photo has no timestamp. */
@@ -112,6 +120,7 @@ export function buildManifest(
       description: p.description,
       duration: p.duration,
       zoom: p.zoom ?? DEFAULT_ZOOM,
+      overlay: p.overlay,
       lat: p.lat,
       lng: p.lng,
       date: p.date ? p.date.toISOString() : null,
@@ -157,6 +166,7 @@ export function parseManifest(json: string): Manifest {
     description: p.description ?? '',
     duration: p.duration ?? parsed.settings?.defaultDuration ?? 1,
     zoom: p.zoom ?? DEFAULT_ZOOM,
+    overlay: isPhotoOverlaySetting(p.overlay) ? p.overlay : undefined,
     lat: p.lat ?? null,
     lng: p.lng ?? null,
     date: p.date ?? null,
@@ -185,6 +195,7 @@ function entryToPhoto(entry: ManifestPhoto, url: string): PhotoPoint {
     description: entry.description,
     duration: entry.duration,
     zoom: entry.zoom,
+    overlay: entry.overlay,
     lat: entry.lat,
     lng: entry.lng,
     date: entry.date ? new Date(entry.date) : null,

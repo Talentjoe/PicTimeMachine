@@ -23,6 +23,9 @@ export function overlayFocusOffset(
       return [Math.round(-0.32 * mapW), Math.round(0.22 * mapH)];
     case 'side':
       return [Math.round(-0.225 * mapW), 0];
+    case 'small':
+      // The corner card barely occludes the center — keep the marker centered.
+      return [0, 0];
     default:
       return [0, 0];
   }

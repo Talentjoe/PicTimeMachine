@@ -70,7 +70,12 @@ import {
   type ProjectSettings,
   type Manifest,
 } from '../../lib/project';
-import { isLocated, DEFAULT_ZOOM, type PhotoPoint } from '../../types/photo';
+import {
+  isLocated,
+  DEFAULT_ZOOM,
+  type PhotoPoint,
+  type PhotoOverlaySetting,
+} from '../../types/photo';
 import {
   newCollectionId,
   nextCollectionColor,
@@ -99,9 +104,12 @@ import {
   saveUiPrefs,
   SIDEBAR_WIDTH_MIN,
   SIDEBAR_WIDTH_MAX,
-  BOTTOM_HEIGHT_MIN,
-  BOTTOM_HEIGHT_MAX,
+  BOTTOM_AREA_HEIGHT_MIN,
+  BOTTOM_AREA_HEIGHT_MAX,
+  INSPECTOR_WIDTH_MIN,
+  INSPECTOR_WIDTH_MAX,
   type OverlayMode,
+  type SmallOverlayPos,
 } from '../../lib/uiPrefs';
 
 /** Triggers a browser download for a Blob. */
@@ -119,6 +127,8 @@ function PhotoTrackPage() {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [timeline, setTimeline] = useState<TimelineClip[]>([]);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  /** All selected clips (Ctrl/Cmd toggle, Shift range); superset of selectedClipId. */
+  const [selectedClipIds, setSelectedClipIds] = useState<ReadonlySet<string>>(new Set());
   const [currentIndex, setCurrentIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   /** Current clip's move/hold phase (drives the 'auto' overlay mode). */
@@ -139,20 +149,33 @@ function PhotoTrackPage() {
   const [initialPrefs] = useState(loadUiPrefs);
   const [sidebarWidth, setSidebarWidth] = useState(initialPrefs.sidebarWidth);
   const [sidebarSide, setSidebarSide] = useState(initialPrefs.sidebarSide);
-  const [bottomHeight, setBottomHeight] = useState(initialPrefs.bottomHeight);
+  const [bottomAreaHeight, setBottomAreaHeight] = useState(initialPrefs.bottomAreaHeight);
+  const [inspectorWidth, setInspectorWidth] = useState(initialPrefs.inspectorWidth);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>(initialPrefs.overlayMode);
   const [aspect, setAspect] = useState<AspectId>(initialPrefs.aspect);
+  const [smallOverlayPos, setSmallOverlayPos] = useState<SmallOverlayPos | null>(
+    initialPrefs.smallOverlayPos
+  );
   const [sidebarTab, setSidebarTab] = useState<'bin' | 'collections'>('bin');
   const [mapFullscreen, setMapFullscreen] = useState(false);
 
   // Persist layout prefs (debounced; best-effort).
   useEffect(() => {
     const t = window.setTimeout(
-      () => saveUiPrefs({ sidebarWidth, sidebarSide, bottomHeight, overlayMode, aspect }),
+      () =>
+        saveUiPrefs({
+          sidebarWidth,
+          sidebarSide,
+          bottomAreaHeight,
+          inspectorWidth,
+          overlayMode,
+          aspect,
+          smallOverlayPos,
+        }),
       300
     );
     return () => window.clearTimeout(t);
-  }, [sidebarWidth, sidebarSide, bottomHeight, overlayMode, aspect]);
+  }, [sidebarWidth, sidebarSide, bottomAreaHeight, inspectorWidth, overlayMode, aspect, smallOverlayPos]);
 
   // The map area is the fullscreen target and the letterbox reference frame.
   const mapAreaRef = useRef<HTMLDivElement | null>(null);
@@ -257,19 +280,24 @@ function PhotoTrackPage() {
   );
 
   // 右键 → 在地图上定位 takes precedence over the timeline-driven framing.
+  // Memoized so the (memoized) MapView doesn't reconcile on unrelated renders.
   const focusPhoto = focusPhotoId ? photoById.get(focusPhotoId) : undefined;
-  const target: ViewTarget =
-    focusPhoto && isLocated(focusPhoto)
-      ? {
-          kind: 'photo',
-          photoId: focusPhoto.id,
-          zoom: focusPhoto.zoom ?? DEFAULT_ZOOM,
-          moveDuration: 0.8,
-          animate: true,
-        }
-      : preview && timeline.length
-      ? resolveTarget(clampedIndex)
-      : { kind: 'overview' };
+  const hasTimeline = timeline.length > 0;
+  const target: ViewTarget = useMemo(
+    () =>
+      focusPhoto && isLocated(focusPhoto)
+        ? {
+            kind: 'photo',
+            photoId: focusPhoto.id,
+            zoom: focusPhoto.zoom ?? DEFAULT_ZOOM,
+            moveDuration: 0.8,
+            animate: true,
+          }
+        : preview && hasTimeline
+        ? resolveTarget(clampedIndex)
+        : { kind: 'overview' },
+    [focusPhoto, preview, hasTimeline, clampedIndex, resolveTarget]
+  );
 
   // The photo to showcase in the overlay (only on a photo clip while previewing).
   const overlayPhoto =
@@ -280,31 +308,125 @@ function PhotoTrackPage() {
   // Paused = presentation state: always show the large ("hold") layout.
   const effectivePhase = playing ? phase : 'hold';
 
+  // Per-photo overlay override: 'hidden' shows no card, other values replace
+  // the global mode for this photo only.
+  const photoOverlaySetting = overlayPhoto?.overlay;
+  const effectiveOverlayMode: OverlayMode =
+    photoOverlaySetting && photoOverlaySetting !== 'hidden' ? photoOverlaySetting : overlayMode;
+  const shownOverlayPhoto = photoOverlaySetting === 'hidden' ? null : overlayPhoto;
+
   // Shift the focused marker clear of the overlay (sized from the letterboxed
   // viewport so the framing is proportional on every device).
   const focusOffset = useMemo(
-    () => overlayFocusOffset(overlayPhoto ? overlayMode : 'none', letterbox.width, letterbox.height),
-    [overlayPhoto, overlayMode, letterbox.width, letterbox.height]
+    () =>
+      overlayFocusOffset(
+        shownOverlayPhoto ? effectiveOverlayMode : 'none',
+        letterbox.width,
+        letterbox.height
+      ),
+    [shownOverlayPhoto, effectiveOverlayMode, letterbox.width, letterbox.height]
   );
 
-  // WGS-84 target of the next clip, to warm tiles ahead of arrival.
+  // WGS-84 targets of the upcoming clips (skipping gaps), to warm tiles ahead
+  // of arrival. Looks ahead up to two real targets.
   const prefetch = useMemo(() => {
     if (!preview) return null;
-    const clip = timeline[clampedIndex + 1];
-    if (!clip) return null;
-    if (clip.kind === 'photo' && clip.refId) {
-      const p = photoById.get(clip.refId);
-      if (p && isLocated(p)) return { lat: p.lat, lng: p.lng, zoom: clip.zoom ?? p.zoom ?? DEFAULT_ZOOM };
+    const targets: { lat: number; lng: number; zoom: number }[] = [];
+    for (let i = clampedIndex + 1; i < timeline.length && targets.length < 2; i++) {
+      const clip = timeline[i];
+      if (clip.kind === 'photo' && clip.refId) {
+        const p = photoById.get(clip.refId);
+        if (p && isLocated(p)) {
+          targets.push({ lat: p.lat, lng: p.lng, zoom: clip.zoom ?? p.zoom ?? DEFAULT_ZOOM });
+        }
+      } else if (clip.kind === 'collection' && clip.refId) {
+        const c = collectionById.get(clip.refId);
+        const first = c?.photoIds.map((id) => photoById.get(id)).find((p) => p && isLocated(p));
+        if (first && isLocated(first)) {
+          targets.push({ lat: first.lat, lng: first.lng, zoom: DEFAULT_ZOOM });
+        }
+      }
     }
-    if (clip.kind === 'collection' && clip.refId) {
-      const c = collectionById.get(clip.refId);
-      const first = c?.photoIds.map((id) => photoById.get(id)).find((p) => p && isLocated(p));
-      if (first && isLocated(first)) return { lat: first.lat, lng: first.lng, zoom: DEFAULT_ZOOM };
-    }
-    return null;
+    return targets.length ? targets : null;
   }, [preview, timeline, clampedIndex, photoById, collectionById]);
 
+  // Warm the next photo clips' images (cache + decoder) so the overlay paints
+  // instantly on clip switch instead of loading the blob mid-transition.
+  const nextPhotoUrls = useMemo(() => {
+    if (!preview) return [];
+    const urls: string[] = [];
+    for (let i = clampedIndex + 1; i < timeline.length && urls.length < 2; i++) {
+      const clip = timeline[i];
+      if (clip.kind !== 'photo' || !clip.refId) continue;
+      const p = photoById.get(clip.refId);
+      if (p) urls.push(p.url);
+    }
+    return urls;
+  }, [preview, timeline, clampedIndex, photoById]);
+  const warmedImagesRef = useRef<HTMLImageElement[]>([]);
+  useEffect(() => {
+    // Hold the elements until the lookahead changes so the decode isn't discarded.
+    warmedImagesRef.current = nextPhotoUrls.map((u) => {
+      const img = new Image();
+      img.src = u;
+      img.decode?.().catch(() => {});
+      return img;
+    });
+  }, [nextPhotoUrls]);
+
   const selectedClipLabel = selectedClip ? clipInfos[timeline.indexOf(selectedClip)]?.label ?? '' : '';
+
+  // ---- clip selection (multi-select: Ctrl/Cmd toggle, Shift range) ----
+
+  const clipSelectAnchor = useRef<string | null>(null);
+
+  /** Single-selects a clip (or clears when null), keeping both states in sync. */
+  const selectOnlyClip = useCallback((id: string | null) => {
+    setSelectedClipId(id);
+    setSelectedClipIds(id ? new Set([id]) : new Set());
+    clipSelectAnchor.current = id;
+  }, []);
+
+  const handleSelectClip = useCallback(
+    (id: string, e?: React.MouseEvent) => {
+      const toggle = !!e && (e.ctrlKey || e.metaKey);
+      const shift = !!e && e.shiftKey;
+      if (shift && clipSelectAnchor.current && clipSelectAnchor.current !== id) {
+        const ids = timeline.map((c) => c.id);
+        const a = ids.indexOf(clipSelectAnchor.current);
+        const b = ids.indexOf(id);
+        if (a !== -1 && b !== -1) {
+          const [lo, hi] = a < b ? [a, b] : [b, a];
+          const next = new Set(selectedClipIds);
+          for (let i = lo; i <= hi; i++) next.add(ids[i]);
+          setSelectedClipIds(next);
+          setSelectedClipId(id);
+          return;
+        }
+      }
+      if (toggle) {
+        clipSelectAnchor.current = id;
+        const next = new Set(selectedClipIds);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        setSelectedClipIds(next);
+        setSelectedClipId(next.has(id) ? id : next.values().next().value ?? null);
+        return;
+      }
+      selectOnlyClip(id);
+    },
+    [timeline, selectedClipIds, selectOnlyClip]
+  );
+
+  // Prune the clip selection when clips disappear (delete, project load, …).
+  useEffect(() => {
+    const ids = new Set(timeline.map((c) => c.id));
+    setSelectedClipIds((prev) => {
+      const next = new Set([...prev].filter((id) => ids.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+    setSelectedClipId((cur) => (cur && !ids.has(cur) ? null : cur));
+  }, [timeline]);
 
   // ---- photo import / project I/O ----
 
@@ -327,7 +449,7 @@ function PhotoTrackPage() {
     setCollections(cols);
     setTimeline(clips);
     setSelectedIds(new Set());
-    setSelectedClipId(null);
+    selectOnlyClip(null);
     setCurrentIndex(0);
     setPreview(false);
     setSnackbar(msg);
@@ -405,7 +527,7 @@ function PhotoTrackPage() {
     setCollections([]);
     setTimeline([]);
     setSelectedIds(new Set());
-    setSelectedClipId(null);
+    selectOnlyClip(null);
     setCurrentIndex(0);
     setPreview(false);
     // 清空 is an explicit reset — drop the session cache too.
@@ -461,6 +583,11 @@ function PhotoTrackPage() {
     setImages((prev) => prev.map((p) => (p.id === id ? { ...p, description } : p)));
   }, []);
 
+  /** Sets/clears a photo's playback overlay override (saved into the project file). */
+  const setPhotoOverlay = useCallback((id: string, overlay: PhotoOverlaySetting | undefined) => {
+    setImages((prev) => prev.map((p) => (p.id === id ? { ...p, overlay } : p)));
+  }, []);
+
   const handleSortByTime = () => setImages((prev) => chronological(prev));
 
   // ---- timeline edits ----
@@ -470,7 +597,7 @@ function PhotoTrackPage() {
     if (!p || !isLocated(p)) return;
     const clip = photoClip(id, p.zoom ?? DEFAULT_ZOOM);
     setTimeline((prev) => [...prev, clip]);
-    setSelectedClipId(clip.id);
+    selectOnlyClip(clip.id);
     setSnackbar(`已加入时间线：${p.name}`);
   };
 
@@ -479,14 +606,14 @@ function PhotoTrackPage() {
     if (!c) return;
     const clip = collectionClip(id);
     setTimeline((prev) => [...prev, clip]);
-    setSelectedClipId(clip.id);
+    selectOnlyClip(clip.id);
     setSnackbar(`已加入组合片段：${c.name}`);
   };
 
   const addGapToTimeline = () => {
     const clip = gapClip();
     setTimeline((prev) => [...prev, clip]);
-    setSelectedClipId(clip.id);
+    selectOnlyClip(clip.id);
   };
 
   /** Appends the given photos (located ones, capture-time order) as clips. */
@@ -501,10 +628,10 @@ function PhotoTrackPage() {
       }
       const clips = photos.map((p) => photoClip(p.id, p.zoom ?? DEFAULT_ZOOM));
       setTimeline((prev) => [...prev, ...clips]);
-      setSelectedClipId(clips[clips.length - 1].id);
+      selectOnlyClip(clips[clips.length - 1].id);
       setSnackbar(`已按时间加入 ${clips.length} 个片段`);
     },
-    [images]
+    [images, selectOnlyClip]
   );
 
   const duplicateClip = useCallback((id: string) => {
@@ -535,7 +662,16 @@ function PhotoTrackPage() {
 
   // Prefer what's directly under the pointer; fall back to nearest centers so
   // dragging from the bin over the thin clip strip still resolves a target.
+  // Clip drags only ever target other clips — never the whole-track droppable —
+  // so releases over connector gaps / trailing space resolve to the nearest clip
+  // instead of silently cancelling.
   const dndCollision: CollisionDetection = useCallback((args) => {
+    if (String(args.active.id).startsWith(CLIP_DND_PREFIX)) {
+      const clipContainers = args.droppableContainers.filter((c) =>
+        String(c.id).startsWith(CLIP_DND_PREFIX)
+      );
+      return closestCenter({ ...args, droppableContainers: clipContainers });
+    }
     const within = pointerWithin(args);
     return within.length > 0 ? within : closestCenter(args);
   }, []);
@@ -573,10 +709,10 @@ function PhotoTrackPage() {
         }
         return [...prev, clip];
       });
-      setSelectedClipId(clip.id);
+      selectOnlyClip(clip.id);
       setSnackbar(`已加入时间线：${p.name}`);
     },
-    [photoById]
+    [photoById, selectOnlyClip]
   );
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -594,6 +730,14 @@ function PhotoTrackPage() {
           const to = prev.findIndex((c) => c.id === o.id);
           if (from === -1 || to === -1) return prev;
           return arrayMove(prev, from, to);
+        });
+      } else if (o.type === 'track') {
+        // Shouldn't happen with the clip-only collision above, but if the drop
+        // still resolves to the bare track, move the clip to the end.
+        setTimeline((prev) => {
+          const from = prev.findIndex((c) => c.id === a.id);
+          if (from === -1) return prev;
+          return arrayMove(prev, from, prev.length - 1);
         });
       }
       return;
@@ -619,15 +763,54 @@ function PhotoTrackPage() {
 
   const deleteClip = (id: string) => {
     setTimeline((prev) => prev.filter((c) => c.id !== id));
-    setSelectedClipId((cur) => (cur === id ? null : cur));
   };
 
-  const setClipMove = (id: string, seconds: number) =>
-    setTimeline((prev) => prev.map((c) => (c.id === id ? { ...c, moveDuration: seconds } : c)));
-  const setClipHold = (id: string, seconds: number) =>
-    setTimeline((prev) => prev.map((c) => (c.id === id ? { ...c, holdDuration: seconds } : c)));
-  const setClipZoom = (id: string, zoom: number) =>
-    setTimeline((prev) => prev.map((c) => (c.id === id ? { ...c, zoom } : c)));
+  /** Editing a clip that is part of a multi-selection edits the whole selection. */
+  const editTargets = useCallback(
+    (id: string): ReadonlySet<string> =>
+      selectedClipIds.has(id) && selectedClipIds.size > 1 ? selectedClipIds : new Set([id]),
+    [selectedClipIds]
+  );
+
+  const setClipMove = (id: string, seconds: number) => {
+    const targets = editTargets(id);
+    setTimeline((prev) =>
+      prev.map((c) => (targets.has(c.id) ? { ...c, moveDuration: seconds } : c))
+    );
+  };
+  const setClipHold = (id: string, seconds: number) => {
+    const targets = editTargets(id);
+    setTimeline((prev) =>
+      prev.map((c) => (targets.has(c.id) ? { ...c, holdDuration: seconds } : c))
+    );
+  };
+  const setClipZoom = (id: string, zoom: number) => {
+    const targets = editTargets(id);
+    setTimeline((prev) =>
+      prev.map((c) => (targets.has(c.id) && c.kind === 'photo' ? { ...c, zoom } : c))
+    );
+  };
+
+  /** 格式刷: copies the source clip's move/hold/zoom onto the target clips. */
+  const applyClipStyle = useCallback((sourceId: string, targetIds: ReadonlySet<string>) => {
+    setTimeline((prev) => {
+      const src = prev.find((c) => c.id === sourceId);
+      if (!src) return prev;
+      return prev.map((c) => {
+        if (c.id === sourceId || !targetIds.has(c.id)) return c;
+        return {
+          ...c,
+          moveDuration: src.moveDuration,
+          holdDuration: src.holdDuration,
+          // zoom only applies to photo clips; keep the target's own zoom
+          // when the source has none.
+          ...(c.kind === 'photo' && src.zoom !== undefined ? { zoom: src.zoom } : {}),
+        };
+      });
+    });
+    const count = [...targetIds].filter((t) => t !== sourceId).length;
+    setSnackbar(`已将片段设置应用到 ${count} 个片段`);
+  }, []);
 
   // ---- selection (multi-select with shift range) ----
 
@@ -755,6 +938,14 @@ function PhotoTrackPage() {
   }, [binMenu.state, selectedIds]);
   const binMenuPhoto = binMenu.state ? photoById.get(binMenu.state.payload) : undefined;
 
+  /** 格式刷 targets: the selected clips minus the right-clicked source clip. */
+  const clipMenuApplyTargets = useMemo<ReadonlySet<string>>(() => {
+    if (!clipMenu.state) return new Set<string>();
+    const next = new Set(selectedClipIds);
+    next.delete(clipMenu.state.payload);
+    return next;
+  }, [clipMenu.state, selectedClipIds]);
+
   return (
     <DndContext
       sensors={dndSensors}
@@ -820,7 +1011,7 @@ function PhotoTrackPage() {
             </ToggleButtonGroup>
           </Tooltip>
 
-          <Tooltip title="播放时照片的展示方式">
+          <Tooltip title="播放时照片的展示方式（自动 = 飞行时小图、停留时大图；小图卡片可拖动摆放）">
             <ToggleButtonGroup
               exclusive
               size="small"
@@ -830,7 +1021,8 @@ function PhotoTrackPage() {
             >
               <ToggleButton value="center">居中大图</ToggleButton>
               <ToggleButton value="side">侧边大图</ToggleButton>
-              <ToggleButton value="auto">移动小图</ToggleButton>
+              <ToggleButton value="small">常驻小图</ToggleButton>
+              <ToggleButton value="auto">自动</ToggleButton>
             </ToggleButtonGroup>
           </Tooltip>
 
@@ -1038,7 +1230,13 @@ function PhotoTrackPage() {
               prefetch={prefetch}
               focusOffset={focusOffset}
             />
-            <PhotoOverlay photo={overlayPhoto} mode={overlayMode} phase={effectivePhase} />
+            <PhotoOverlay
+              photo={shownOverlayPhoto}
+              mode={effectiveOverlayMode}
+              phase={effectivePhase}
+              smallPos={smallOverlayPos}
+              onSmallPosChange={setSmallOverlayPos}
+            />
           </Box>
 
           {/* Floating map controls — rendered in-tree (no portal) so they stay
@@ -1091,56 +1289,68 @@ function PhotoTrackPage() {
         </Box>
       </Box>
 
-      {/* Timeline track */}
-      <Box sx={{ px: 2, pt: 1 }}>
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
-          <Typography variant="subtitle2" sx={{ flex: 1 }}>
-            时间线（拖动片段排序，点选片段可调时长）
-          </Typography>
-          <Button size="small" startIcon={<AddBoxOutlinedIcon />} onClick={addGapToTimeline}>
-            添加空白片段
-          </Button>
-        </Stack>
-        <Timeline
-          ref={timelineRef}
-          clips={timeline}
-          infos={clipInfos}
-          boundaries={boundaries}
-          total={total}
-          selectedClipId={selectedClipId}
-          onClipChange={setCurrentIndex}
-          onPhaseChange={setPhase}
-          onSelectClip={setSelectedClipId}
-          onUserInteract={enterPreview}
-          onPlayStateChange={setPlaying}
-          onClipContextMenu={clipMenu.open}
-        />
-      </Box>
-
-      {/* Resizable divider above the clip inspector */}
+      {/* Resizable divider between the map area (above) and the bottom block */}
       <ResizeHandle
         orientation="horizontal"
         onResize={(delta) =>
-          setBottomHeight((h) => clamp(h - delta, BOTTOM_HEIGHT_MIN, BOTTOM_HEIGHT_MAX))
+          setBottomAreaHeight((h) => clamp(h - delta, BOTTOM_AREA_HEIGHT_MIN, BOTTOM_AREA_HEIGHT_MAX))
         }
       />
 
-      {/* Bottom: clip inspector */}
-      <Box sx={{ height: bottomHeight, flexShrink: 0, overflowY: 'auto', p: 2, pt: 1 }}>
-        <ClipInspector
-          clip={selectedClip}
-          label={selectedClipLabel}
-          photo={
-            selectedClip?.kind === 'photo' && selectedClip.refId
-              ? photoById.get(selectedClip.refId) ?? null
-              : null
+      {/* Bottom block: timeline track | clip inspector, side by side (NLE style) */}
+      <Box sx={{ height: bottomAreaHeight, flexShrink: 0, display: 'flex', minHeight: 0 }}>
+        <Box sx={{ flex: 1, minWidth: 0, overflowY: 'auto', px: 2, pt: 1, pb: 1 }}>
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+            <Typography variant="subtitle2" sx={{ flex: 1 }}>
+              时间线（拖动片段排序，Ctrl/Shift 点选可多选）
+            </Typography>
+            <Button size="small" startIcon={<AddBoxOutlinedIcon />} onClick={addGapToTimeline}>
+              添加空白片段
+            </Button>
+          </Stack>
+          <Timeline
+            ref={timelineRef}
+            clips={timeline}
+            infos={clipInfos}
+            boundaries={boundaries}
+            total={total}
+            selectedClipIds={selectedClipIds}
+            onClipChange={setCurrentIndex}
+            onPhaseChange={setPhase}
+            onSelectClip={handleSelectClip}
+            onUserInteract={enterPreview}
+            onPlayStateChange={setPlaying}
+            onClipContextMenu={clipMenu.open}
+          />
+        </Box>
+
+        <ResizeHandle
+          orientation="vertical"
+          onResize={(delta) =>
+            setInspectorWidth((w) => clamp(w - delta, INSPECTOR_WIDTH_MIN, INSPECTOR_WIDTH_MAX))
           }
-          onMoveChange={setClipMove}
-          onHoldChange={setClipHold}
-          onZoomChange={setClipZoom}
-          onDelete={deleteClip}
-          onDescriptionChange={handleDescriptionChange}
         />
+
+        {/* Clip inspector column */}
+        <Box sx={{ width: inspectorWidth, flexShrink: 0, overflowY: 'auto', p: 1.5 }}>
+          <ClipInspector
+            clip={selectedClip}
+            label={selectedClipLabel}
+            photo={
+              selectedClip?.kind === 'photo' && selectedClip.refId
+                ? photoById.get(selectedClip.refId) ?? null
+                : null
+            }
+            onMoveChange={setClipMove}
+            onHoldChange={setClipHold}
+            onZoomChange={setClipZoom}
+            onDelete={deleteClip}
+            onDescriptionChange={handleDescriptionChange}
+            onOverlayChange={setPhotoOverlay}
+            selectedCount={selectedClipIds.size}
+            onApplyToSelection={(sourceId) => applyClipStyle(sourceId, selectedClipIds)}
+          />
+        </Box>
       </Box>
 
       <Snackbar
@@ -1239,6 +1449,15 @@ function PhotoTrackPage() {
           }}
         >
           复制片段
+        </MenuItem>
+        <MenuItem
+          disabled={clipMenuApplyTargets.size === 0}
+          onClick={() => {
+            if (clipMenu.state) applyClipStyle(clipMenu.state.payload, clipMenuApplyTargets);
+            clipMenu.close();
+          }}
+        >
+          将设置应用到所选{clipMenuApplyTargets.size > 0 ? `（${clipMenuApplyTargets.size} 个）` : ''}
         </MenuItem>
         <MenuItem
           onClick={() => {

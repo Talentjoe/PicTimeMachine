@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { memo, useEffect, useMemo } from 'react';
 import { MapContainer, TileLayer } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import './icons'; // registers the default Leaflet marker icon (side effect)
@@ -34,8 +34,8 @@ interface MapViewProps {
   /** All collections (used to resolve a collection target's hull). */
   collections?: Collection[];
   onSelectCollection?: (id: string) => void;
-  /** Next clip's target (WGS-84) whose tiles to warm; null to skip prefetch. */
-  prefetch?: { lat: number; lng: number; zoom: number } | null;
+  /** Upcoming clips' targets (WGS-84) whose tiles to warm; null to skip prefetch. */
+  prefetch?: { lat: number; lng: number; zoom: number }[] | null;
   /** Marker offset from the viewport center for photo targets (px; keeps the
    *  marker clear of the photo overlay). */
   focusOffset?: [number, number];
@@ -86,19 +86,25 @@ const MapView: React.FC<MapViewProps> = ({
   const collectionPositions = collectionShapes[0]?.points ?? [];
   const highlightId = target.kind === 'photo' ? target.photoId : null;
 
-  // Warm tiles for the upcoming clip's location (best-effort preload).
-  const pf = prefetch
-    ? source.gcj02
-      ? wgs84ToGcj02(prefetch.lat, prefetch.lng)
-      : ([prefetch.lat, prefetch.lng] as [number, number])
-    : null;
-  const pfLat = pf ? pf[0] : null;
-  const pfLng = pf ? pf[1] : null;
-  const pfZoom = prefetch?.zoom ?? null;
+  // Warm tiles for the upcoming clips' locations (best-effort preload).
+  const prefetchTargets = useMemo(() => {
+    if (!prefetch || prefetch.length === 0) return [];
+    return prefetch.map((p) => {
+      const [lat, lng] = source.gcj02 ? wgs84ToGcj02(p.lat, p.lng) : [p.lat, p.lng];
+      return { lat, lng, zoom: p.zoom };
+    });
+  }, [prefetch, source.gcj02]);
   useEffect(() => {
-    if (pfLat == null || pfLng == null || pfZoom == null) return;
-    prefetchTiles({ url: source.url, subdomains: source.subdomains, lat: pfLat, lng: pfLng, zoom: pfZoom });
-  }, [pfLat, pfLng, pfZoom, source.url, source.subdomains]);
+    for (const t of prefetchTargets) {
+      prefetchTiles({
+        url: source.url,
+        subdomains: source.subdomains,
+        lat: t.lat,
+        lng: t.lng,
+        zoom: t.zoom,
+      });
+    }
+  }, [prefetchTargets, source.url, source.subdomains]);
 
   let framing: React.ReactNode;
   if (target.kind === 'photo') {
@@ -126,6 +132,10 @@ const MapView: React.FC<MapViewProps> = ({
         key={source.key}
         url={source.url}
         attribution={source.attribution}
+        // Keep a generous ring of off-screen tiles alive so fly animations
+        // reveal already-loaded tiles instead of grey placeholders.
+        keepBuffer={4}
+        updateInterval={100}
         {...(source.subdomains ? { subdomains: source.subdomains } : {})}
       />
 
@@ -144,4 +154,6 @@ const MapView: React.FC<MapViewProps> = ({
   );
 };
 
-export default MapView;
+// Memoized: the page re-renders on every clip/phase/selection change, but the
+// map only needs to reconcile when its own (stable, memoized) props change.
+export default memo(MapView);

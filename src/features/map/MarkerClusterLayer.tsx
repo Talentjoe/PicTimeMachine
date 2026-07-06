@@ -1,7 +1,7 @@
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet.markercluster';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import './markercluster.css';
 import { defaultIcon, highlightIcon } from './icons';
 import type { LocatedPhoto } from '../../types/photo';
@@ -50,8 +50,13 @@ function buildPopup(img: LocatedPhoto): HTMLElement {
 
 /**
  * Renders photo markers in a Leaflet markerCluster group via imperative side
- * effects (this component renders null). When `highlight` is set, the most
- * recent photo is drawn separately with the red icon and an opened popup.
+ * effects (this component renders null).
+ *
+ * Split into two effects on purpose: building the cluster + all markers is
+ * O(N) and only re-runs when `images` change, while the highlight (which
+ * changes on every clip during playback) is an O(1) swap — the highlighted
+ * marker is pulled out of the cluster, restyled red, and pinned to the map;
+ * the previous one is restored into the cluster.
  */
 export const MarkerClusterLayer: React.FC<ClusterProps> = ({
   images,
@@ -60,6 +65,11 @@ export const MarkerClusterLayer: React.FC<ClusterProps> = ({
 }) => {
   const map = useMap();
 
+  const groupRef = useRef<ReturnType<typeof L.markerClusterGroup> | null>(null);
+  const markersRef = useRef(new Map<string, L.Marker>());
+  const highlightedIdRef = useRef<string | null>(null);
+
+  // Effect A — build the cluster group + one marker per photo (images only).
   useEffect(() => {
     if (!images || images.length === 0) return;
 
@@ -79,40 +89,64 @@ export const MarkerClusterLayer: React.FC<ClusterProps> = ({
     // autoPan keeps the clicked marker's popup fully on screen (the map pans
     // if it would open at the edge); keepInView stays off so it doesn't fight
     // flyTo during playback/scrubbing.
-    const bindPopup = (marker: L.Marker, img: LocatedPhoto) => {
+    const markers = new Map<string, L.Marker>();
+    images.forEach((img) => {
+      const marker = L.marker([img.lat, img.lng], { icon: defaultIcon });
       marker.bindPopup(() => buildPopup(img), {
         autoPan: true,
         autoPanPadding: L.point(48, 48),
         keepInView: false,
       });
-    };
-
-    const highlightImage = highlightId ? images.find((img) => img.id === highlightId) ?? null : null;
-    const normalImages = highlightImage ? images.filter((img) => img.id !== highlightImage.id) : images;
-
-    normalImages.forEach((img) => {
-      const marker = L.marker([img.lat, img.lng], { icon: defaultIcon });
-      bindPopup(marker, img);
+      markers.set(img.id, marker);
       clusterGroup.addLayer(marker);
     });
 
     map.addLayer(clusterGroup);
-
-    let highlightMarker: L.Marker | null = null;
-    if (highlightImage) {
-      highlightMarker = L.marker([highlightImage.lat, highlightImage.lng], {
-        icon: highlightIcon,
-        zIndexOffset: 1000,
-      });
-      bindPopup(highlightMarker, highlightImage);
-      highlightMarker.addTo(map);
-      if (openHighlightPopup) highlightMarker.openPopup();
-    }
+    groupRef.current = clusterGroup;
+    markersRef.current = markers;
+    highlightedIdRef.current = null; // every marker starts inside the cluster
 
     return () => {
       map.removeLayer(clusterGroup);
-      if (highlightMarker) map.removeLayer(highlightMarker);
+      // A promoted highlight marker lives outside the group — drop it too
+      // (removing a marker that isn't on the map is a no-op).
+      markers.forEach((m) => map.removeLayer(m));
+      groupRef.current = null;
+      markersRef.current = new Map();
+      highlightedIdRef.current = null;
     };
+  }, [map, images]);
+
+  // Effect B — swap the single highlighted marker (runs on every clip change,
+  // and after each rebuild above thanks to the shared `images` dep).
+  useEffect(() => {
+    const group = groupRef.current;
+    const markers = markersRef.current;
+    if (!group) return;
+
+    const prevId = highlightedIdRef.current;
+    if (prevId && prevId !== highlightId) {
+      const prev = markers.get(prevId);
+      if (prev) {
+        map.removeLayer(prev);
+        prev.setIcon(defaultIcon);
+        prev.setZIndexOffset(0);
+        group.addLayer(prev);
+      }
+      highlightedIdRef.current = null;
+    }
+
+    if (highlightId && highlightId !== prevId) {
+      const next = markers.get(highlightId);
+      if (next) {
+        group.removeLayer(next);
+        next.setIcon(highlightIcon);
+        next.setZIndexOffset(1000);
+        next.addTo(map);
+        if (openHighlightPopup) next.openPopup();
+        highlightedIdRef.current = highlightId;
+      }
+    }
   }, [map, images, highlightId, openHighlightPopup]);
 
   return null;

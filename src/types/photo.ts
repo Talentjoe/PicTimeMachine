@@ -24,9 +24,19 @@ export interface PhotoPoint {
   duration: number;
   /** Map zoom level to use when focusing this photo during playback (default DEFAULT_ZOOM). */
   zoom?: number;
+  /** Per-photo photo-card override during playback; undefined = follow the global mode. */
+  overlay?: PhotoOverlaySetting;
   lat: number | null;
   lng: number | null;
   date: Date | null;
+}
+
+/** Per-photo override for the playback photo card ('hidden' = show no card). */
+export type PhotoOverlaySetting = 'center' | 'side' | 'small' | 'hidden';
+
+/** Type guard for overlay values read from project files. */
+export function isPhotoOverlaySetting(v: unknown): v is PhotoOverlaySetting {
+  return v === 'center' || v === 'side' || v === 'small' || v === 'hidden';
 }
 
 /** Default map zoom level when focusing a single photo. */

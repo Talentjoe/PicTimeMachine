@@ -14,6 +14,7 @@ const photos: PhotoPoint[] = [
     description: '起点',
     duration: 2,
     zoom: 15,
+    overlay: 'small',
     lat: 39.9042,
     lng: 116.4074,
     date: new Date('2024-01-01T08:00:00.000Z'),
@@ -60,9 +61,11 @@ describe('manifest round-trip', () => {
     expect(a.duration).toBe(2);
     expect(a.zoom).toBe(15);
     expect(a.date).toBe('2024-01-01T08:00:00.000Z');
+    expect(a.overlay).toBe('small');
     expect(a.file).not.toBe(b.file); // collision-free entry names
 
     expect(b.zoom).toBe(13); // DEFAULT_ZOOM applied to undefined
+    expect(b.overlay).toBeUndefined(); // no override = follow the global mode
     expect(b.lat).toBeNull();
     expect(b.date).toBeNull();
 
@@ -81,6 +84,12 @@ describe('manifest round-trip', () => {
   it('records the reference mode flag', () => {
     const manifest = buildManifest(photos, settings, collections, timeline, 'reference');
     expect(manifest.mode).toBe('reference');
+  });
+
+  it('drops unrecognised overlay values on parse', () => {
+    const manifest = buildManifest(photos, settings, collections, timeline, 'full');
+    const raw = serializeManifest(manifest).replace('"small"', '"huge"');
+    expect(parseManifest(raw).photos[0].overlay).toBeUndefined();
   });
 
   it('rejects an unrecognised or legacy manifest', () => {

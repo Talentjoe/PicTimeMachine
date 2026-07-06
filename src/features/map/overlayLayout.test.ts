@@ -14,6 +14,10 @@ describe('overlayFocusOffset', () => {
     expect(overlayFocusOffset('none', 1000, 500)).toEqual([0, 0]);
   });
 
+  it('keeps the marker centered for the small corner card', () => {
+    expect(overlayFocusOffset('small', 1000, 500)).toEqual([0, 0]);
+  });
+
   it('degenerate map sizes yield no offset', () => {
     expect(overlayFocusOffset('center', 0, 500)).toEqual([0, 0]);
   });

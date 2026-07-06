@@ -11,17 +11,22 @@ describe('parseUiPrefs', () => {
     const prefs = {
       sidebarWidth: 400,
       sidebarSide: 'right' as const,
-      bottomHeight: 200,
-      overlayMode: 'side' as const,
+      bottomAreaHeight: 300,
+      inspectorWidth: 400,
+      overlayMode: 'small' as const,
       aspect: '16:9' as const,
+      smallOverlayPos: { xPct: 12.5, yPct: 80 },
     };
     expect(parseUiPrefs(serializeUiPrefs(prefs))).toEqual(prefs);
   });
 
   it('clamps out-of-range numbers', () => {
-    const parsed = parseUiPrefs(JSON.stringify({ sidebarWidth: 9999, bottomHeight: 1 }));
+    const parsed = parseUiPrefs(
+      JSON.stringify({ sidebarWidth: 9999, bottomAreaHeight: 1, inspectorWidth: 9999 })
+    );
     expect(parsed.sidebarWidth).toBe(560);
-    expect(parsed.bottomHeight).toBe(120);
+    expect(parsed.bottomAreaHeight).toBe(170);
+    expect(parsed.inspectorWidth).toBe(560);
   });
 
   it('falls back per-field on invalid values', () => {
@@ -32,5 +37,15 @@ describe('parseUiPrefs', () => {
     expect(parsed.overlayMode).toBe(DEFAULT_UI_PREFS.overlayMode);
     expect(parsed.aspect).toBe(DEFAULT_UI_PREFS.aspect);
     expect(parsed.sidebarWidth).toBe(300);
+  });
+
+  it('validates and clamps smallOverlayPos', () => {
+    expect(
+      parseUiPrefs(JSON.stringify({ smallOverlayPos: { xPct: -20, yPct: 250 } })).smallOverlayPos
+    ).toEqual({ xPct: 0, yPct: 100 });
+    expect(
+      parseUiPrefs(JSON.stringify({ smallOverlayPos: { xPct: 'a', yPct: 1 } })).smallOverlayPos
+    ).toBeNull();
+    expect(parseUiPrefs(JSON.stringify({ smallOverlayPos: 'corner' })).smallOverlayPos).toBeNull();
   });
 });

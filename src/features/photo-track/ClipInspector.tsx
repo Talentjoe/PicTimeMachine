@@ -1,7 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { Paper, Stack, Typography, TextField, IconButton, Tooltip, Box } from '@mui/material';
+import {
+  Paper,
+  Stack,
+  Typography,
+  TextField,
+  IconButton,
+  Tooltip,
+  Box,
+  Button,
+  ToggleButton,
+  ToggleButtonGroup,
+} from '@mui/material';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import { DEFAULT_ZOOM, type PhotoPoint } from '../../types/photo';
+import { DEFAULT_ZOOM, type PhotoPoint, type PhotoOverlaySetting } from '../../types/photo';
 import { clipLength, type TimelineClip } from '../../types/timeline';
 
 interface ClipInspectorProps {
@@ -16,6 +27,12 @@ interface ClipInspectorProps {
   onDelete: (id: string) => void;
   /** Commits a photo's description (debounced — this rebuilds map markers). */
   onDescriptionChange: (id: string, description: string) => void;
+  /** Sets/clears the photo's playback overlay override (saved in the project file). */
+  onOverlayChange: (photoId: string, overlay: PhotoOverlaySetting | undefined) => void;
+  /** How many clips are selected on the timeline (batch edits hit them all). */
+  selectedCount: number;
+  /** 格式刷: applies this clip's move/hold/zoom to every selected clip. */
+  onApplyToSelection?: (sourceClipId: string) => void;
 }
 
 /**
@@ -60,7 +77,7 @@ const DescriptionEditor: React.FC<{
         timer.current = window.setTimeout(() => commit(v), 400);
       }}
       onBlur={(e) => commit(e.target.value)}
-      sx={{ flex: 1, minWidth: 220 }}
+      sx={{ flex: 1, minWidth: 0, flexBasis: '100%' }}
       helperText="展示在照片卡片与标记弹窗中"
     />
   );
@@ -77,6 +94,9 @@ const ClipInspector: React.FC<ClipInspectorProps> = ({
   onZoomChange,
   onDelete,
   onDescriptionChange,
+  onOverlayChange,
+  selectedCount,
+  onApplyToSelection,
 }) => {
   if (!clip) {
     return (
@@ -105,6 +125,19 @@ const ClipInspector: React.FC<ClipInspectorProps> = ({
           </IconButton>
         </Tooltip>
       </Stack>
+
+      {selectedCount > 1 && (
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5 }}>
+          <Typography variant="caption" color="primary.main" sx={{ flex: 1 }}>
+            已选 {selectedCount} 个片段，修改将同步应用
+          </Typography>
+          <Tooltip title="将此片段的移动/停留/缩放应用到所有选中片段">
+            <Button size="small" variant="outlined" onClick={() => onApplyToSelection?.(clip.id)}>
+              应用到所选
+            </Button>
+          </Tooltip>
+        </Stack>
+      )}
 
       <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap>
         <TextField
@@ -147,6 +180,28 @@ const ClipInspector: React.FC<ClipInspectorProps> = ({
             sx={{ width: 100 }}
             helperText="地图缩放级别"
           />
+        )}
+        {clip.kind === 'photo' && photo && (
+          <Box>
+            <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 0.25 }}>
+              预览卡片（此照片专属，随项目保存）
+            </Typography>
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              color="primary"
+              value={photo.overlay ?? 'default'}
+              onChange={(_e, v: PhotoOverlaySetting | 'default' | null) => {
+                if (v) onOverlayChange(photo.id, v === 'default' ? undefined : v);
+              }}
+            >
+              <ToggleButton value="default">默认</ToggleButton>
+              <ToggleButton value="center">居中</ToggleButton>
+              <ToggleButton value="side">侧边</ToggleButton>
+              <ToggleButton value="small">小图</ToggleButton>
+              <ToggleButton value="hidden">隐藏</ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
         )}
         {clip.kind === 'photo' && photo && (
           <DescriptionEditor photo={photo} onDescriptionChange={onDescriptionChange} />

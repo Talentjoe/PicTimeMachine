@@ -28,32 +28,84 @@ export function fillTileUrl(template: string, x: number, y: number, z: number, s
     .replace('{y}', String(y));
 }
 
-interface PrefetchOptions {
+export interface PrefetchSpec {
   url: string;
   subdomains?: string[];
   /** Target center, in the active basemap datum (GCJ-02 for Chinese maps). */
   lat: number;
   lng: number;
   zoom: number;
-  /** How many tile rings around the center to warm (1 → 3×3). */
+  /** How many tile rings around the center to warm at the target zoom (2 → 5×5). */
   radius?: number;
+  /** Hard cap on the number of tile URLs enumerated per call. */
+  maxTiles?: number;
+}
+
+/**
+ * Enumerates the tile URLs to warm for a target (pure — unit-testable):
+ * a block around the center at the destination zoom, plus small blocks at
+ * two lower "approach" zooms (z-2, z-4) that a flyTo animation passes
+ * through while zooming out and back in. Subdomains are rotated per tile so
+ * the load spreads across the tile servers.
+ */
+export function tileUrlsFor(spec: PrefetchSpec): string[] {
+  const { url, subdomains, lat, lng } = spec;
+  const radius = spec.radius ?? 2;
+  const maxTiles = spec.maxTiles ?? 48;
+  const zBase = Math.round(spec.zoom);
+  if (!Number.isFinite(zBase) || zBase < 0) return [];
+  const subs = subdomains && subdomains.length ? subdomains : ['a'];
+  const urls: string[] = [];
+  let sIdx = 0;
+
+  const pushBlock = (z: number, r: number) => {
+    if (z < 0) return;
+    const { x, y } = lngLatToTileXY(lat, lng, z);
+    const max = 2 ** z;
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dy = -r; dy <= r; dy++) {
+        const tx = x + dx;
+        const ty = y + dy;
+        if (tx < 0 || ty < 0 || tx >= max || ty >= max) continue;
+        if (urls.length >= maxTiles) return;
+        urls.push(fillTileUrl(url, tx, ty, z, subs[sIdx++ % subs.length]));
+      }
+    }
+  };
+
+  pushBlock(zBase, radius);
+  pushBlock(zBase - 2, 1);
+  pushBlock(zBase - 4, 1);
+  return urls;
+}
+
+/**
+ * Recently-warmed tile URLs (bounded, insertion-ordered) so scrubbing back
+ * and forth over the same clips doesn't re-request identical tiles.
+ */
+const recentlyWarmed = new Set<string>();
+const RECENT_LIMIT = 500;
+
+function markWarmed(u: string): void {
+  recentlyWarmed.add(u);
+  if (recentlyWarmed.size <= RECENT_LIMIT) return;
+  // Evict the oldest fifth (Set iterates in insertion order).
+  const drop = Math.floor(RECENT_LIMIT / 5);
+  const it = recentlyWarmed.values();
+  for (let i = 0; i < drop; i++) {
+    const v = it.next();
+    if (v.done) break;
+    recentlyWarmed.delete(v.value);
+  }
 }
 
 /** Warms the browser cache for the tiles around a target center/zoom. */
-export function prefetchTiles({ url, subdomains, lat, lng, zoom, radius = 1 }: PrefetchOptions): void {
+export function prefetchTiles(spec: PrefetchSpec): void {
   if (typeof Image === 'undefined') return;
-  const z = Math.round(zoom);
-  if (!Number.isFinite(z) || z < 0) return;
-  const { x, y } = lngLatToTileXY(lat, lng, z);
-  const max = 2 ** z;
-  const s = subdomains && subdomains.length ? subdomains[0] : 'a';
-  for (let dx = -radius; dx <= radius; dx++) {
-    for (let dy = -radius; dy <= radius; dy++) {
-      const tx = x + dx;
-      const ty = y + dy;
-      if (tx < 0 || ty < 0 || tx >= max || ty >= max) continue;
-      const img = new Image();
-      img.src = fillTileUrl(url, tx, ty, z, s);
-    }
+  for (const u of tileUrlsFor(spec)) {
+    if (recentlyWarmed.has(u)) continue;
+    markWarmed(u);
+    const img = new Image();
+    img.src = u;
   }
 }
