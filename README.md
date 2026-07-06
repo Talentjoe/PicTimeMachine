@@ -5,7 +5,8 @@
 ## Overview · 项目简介
 PicTimeMachine is a pure front-end React project that visualizes geo-tagged photos on an interactive map, letting you revisit memories in the places where they were captured.
 PicTimeMachine 是一个纯前端的 React 项目，能够在互动地图上展示带有地理信息的照片，让你在地图上重温拍摄时的足迹。
-欢迎访问 [在线示例](https://app.talentjoe.fun) 体验 PicTimeMachine。
+
+欢迎访问 [在线示例](https://app.talentjoe.fun) 体验 PicTimeMachine。使用[sample project](./sample_project.zip)中的示例照片集，或使用你自己的照片集（确保照片包含 EXIF 地理信息）来探索你的照片历史。
 
 ## Features · 功能亮点
 - Interactive map browsing of your photo collection / 通过互动地图浏览个人照片集
